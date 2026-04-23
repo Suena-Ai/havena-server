@@ -13,6 +13,7 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
 const FRONTEND_URL = "https://havena-front.onrender.com";
+const BACKEND_URL = "https://havena-server.onrender.com";
 
 function containsForbiddenContactInfo(text = "") {
   const value = String(text || "").toLowerCase().trim();
@@ -348,6 +349,7 @@ app.post("/api/auth/login", async (req, res) => {
         first_name: user.first_name,
         last_name: user.last_name,
         email_confirmed: user.email_confirmed,
+        stripe_account_id: user.stripe_account_id || "",
       },
     });
   } catch (err) {
@@ -407,10 +409,10 @@ app.post("/api/stripe/connect/start", async (req, res) => {
     let stripeAccountId = existingUser.stripe_account_id || "";
 
     if (!stripeAccountId) {
-     const account = await stripe.accounts.create({
-  type: "express",
-  email: normalizedEmail,
-});
+      const account = await stripe.accounts.create({
+        type: "express",
+        email: normalizedEmail,
+      });
 
       stripeAccountId = account.id;
 
@@ -420,19 +422,19 @@ app.post("/api/stripe/connect/start", async (req, res) => {
           stripe_account_id: stripeAccountId,
         })
         .eq("email", normalizedEmail);
-
-      await supabase
-        .from("logements")
-        .update({
-          stripe_account_id: stripeAccountId,
-        })
-        .eq("hebergeur_email", normalizedEmail);
     }
+
+    await supabase
+      .from("logements")
+      .update({
+        stripe_account_id: stripeAccountId,
+      })
+      .eq("hebergeur_email", normalizedEmail);
 
     const accountLink = await stripe.accountLinks.create({
       account: stripeAccountId,
       refresh_url: `${FRONTEND_URL}/hebergeur/stripe-connect?refresh=1`,
-      return_url: `https://havena-server.onrender.com/api/stripe/connect/complete?account=${encodeURIComponent(
+      return_url: `${BACKEND_URL}/api/stripe/connect/complete?account=${encodeURIComponent(
         stripeAccountId
       )}&email=${encodeURIComponent(normalizedEmail)}`,
       type: "account_onboarding",
@@ -614,8 +616,8 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
           destination: logement.stripe_account_id,
         },
       },
-      success_url: "https://havena-front.onrender.com/reservation/success",
-      cancel_url: "https://havena-front.onrender.com/reservation/cancel",
+      success_url: `${FRONTEND_URL}/reservation/success`,
+      cancel_url: `${FRONTEND_URL}/reservation/cancel`,
     });
 
     return res.json({
@@ -846,7 +848,6 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
       hebergeur_nom,
       disponibilites,
       telephone,
-      stripe_account_id,
     } = req.body;
 
     if (!titre || !type || !ville) {
@@ -855,6 +856,10 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
         message: "Champs obligatoires manquants",
       });
     }
+
+    const normalizedHebergeurEmail = String(hebergeur_email || "")
+      .trim()
+      .toLowerCase();
 
     let image_url = "";
 
@@ -884,6 +889,18 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
       image_url = publicUrlData.publicUrl;
     }
 
+    let stripeAccountId = "";
+
+    if (normalizedHebergeurEmail) {
+      const { data: hebergeurUser } = await supabase
+        .from("havena_users")
+        .select("stripe_account_id")
+        .eq("email", normalizedHebergeurEmail)
+        .maybeSingle();
+
+      stripeAccountId = hebergeurUser?.stripe_account_id || "";
+    }
+
     const logement = {
       titre,
       type,
@@ -902,11 +919,11 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
       jardin: jardin || "",
       parking: parking || "",
       wifi: wifi || "",
-      hebergeur_email: hebergeur_email || "",
+      hebergeur_email: normalizedHebergeurEmail,
       hebergeur_nom: hebergeur_nom || "",
       disponibilites: disponibilites || "",
       telephone: telephone || "",
-      stripe_account_id: stripe_account_id || "",
+      stripe_account_id: stripeAccountId,
     };
 
     const { data, error } = await supabase
@@ -928,6 +945,7 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
       logement: data[0],
     });
   } catch (err) {
+    console.error("Erreur serveur création logement :", err);
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
