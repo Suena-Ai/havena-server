@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const crypto = require("crypto");
 const supabase = require("./supabase");
 const Stripe = require("stripe");
 const transporter = require("./mailer");
@@ -14,15 +15,19 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const FRONTEND_URL = "https://havena-front.onrender.com";
 const BACKEND_URL = "https://havena-server.onrender.com";
+const RESET_PASSWORD_SECRET =
+  process.env.RESET_PASSWORD_SECRET ||
+  process.env.STRIPE_WEBHOOK_SECRET ||
+  "havena-reset-secret";
 
 function containsForbiddenContactInfo(text = "") {
   const value = String(text || "").toLowerCase().trim();
   const phoneRegex =
     /(?:\+?\d{1,3}[\s.\-]?)?(?:\(?\d{2,4}\)?[\s.\-]?)?\d{2,4}[\s.\-]?\d{2,4}[\s.\-]?\d{2,4}/i;
-  const emailRegex =
-    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}/i;
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}/i;
   const linkRegex =
     /(https?:\/\/|www\.|\.com\b|\.fr\b|\.net\b|\.org\b|t\.me\b|wa\.me\b)/i;
+
   const forbiddenWords = [
     "telephone",
     "téléphone",
@@ -61,13 +66,66 @@ function containsForbiddenContactInfo(text = "") {
     "extérieur",
     "exterieur",
   ];
+
   const hasForbiddenWord = forbiddenWords.some((word) => value.includes(word));
+
   return (
     phoneRegex.test(text) ||
     emailRegex.test(text) ||
     linkRegex.test(text) ||
     hasForbiddenWord
   );
+}
+
+function buildResetPasswordToken(email) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const expiresAt = Date.now() + 1000 * 60 * 30;
+  const payload = `${normalizedEmail}|${expiresAt}`;
+  const signature = crypto
+    .createHmac("sha256", RESET_PASSWORD_SECRET)
+    .update(payload)
+    .digest("hex");
+
+  return Buffer.from(`${payload}|${signature}`).toString("base64url");
+}
+
+function verifyResetPasswordToken(token, email) {
+  try {
+    if (!token) {
+      return { ok: false, message: "Token manquant" };
+    }
+
+    const decoded = Buffer.from(String(token), "base64url").toString("utf8");
+    const [tokenEmail, expiresAtRaw, signature] = decoded.split("|");
+
+    if (!tokenEmail || !expiresAtRaw || !signature) {
+      return { ok: false, message: "Token invalide" };
+    }
+
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (tokenEmail !== normalizedEmail) {
+      return { ok: false, message: "Email invalide pour ce lien" };
+    }
+
+    const payload = `${tokenEmail}|${expiresAtRaw}`;
+    const expectedSignature = crypto
+      .createHmac("sha256", RESET_PASSWORD_SECRET)
+      .update(payload)
+      .digest("hex");
+
+    if (signature !== expectedSignature) {
+      return { ok: false, message: "Signature invalide" };
+    }
+
+    const expiresAt = Number(expiresAtRaw);
+    if (!expiresAt || Date.now() > expiresAt) {
+      return { ok: false, message: "Lien expiré" };
+    }
+
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: "Token invalide" };
+  }
 }
 
 app.use(cors());
@@ -119,6 +177,7 @@ app.post(
               .select("*")
               .eq("id", logementId)
               .single();
+
             logement = logementData || null;
           }
 
@@ -242,7 +301,8 @@ app.post("/api/auth/register", async (req, res) => {
       if (existingUser.role !== normalizedRole) {
         return res.status(409).json({
           ok: false,
-          message: "Cette adresse email est déjà utilisée avec un autre profil.",
+          message:
+            "Cette adresse email est déjà utilisée avec un autre profil.",
         });
       }
 
@@ -354,6 +414,143 @@ app.post("/api/auth/login", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur serveur login :", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur",
+    });
+  }
+});
+
+app.post("/api/auth/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        ok: false,
+        message: "Adresse email manquante",
+      });
+    }
+
+    const { data: user, error } = await supabase
+      .from("havena_users")
+      .select("*")
+      .eq("email", normalizedEmail)
+      .maybeSingle();
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture utilisateur",
+        error: error.message,
+      });
+    }
+
+    if (user) {
+      const token = buildResetPasswordToken(normalizedEmail);
+      const resetLink = `${FRONTEND_URL}/reset-password?token=${encodeURIComponent(
+        token
+      )}&email=${encodeURIComponent(normalizedEmail)}`;
+
+      try {
+        await transporter.sendMail({
+          from: process.env.MAIL_USER,
+          to: normalizedEmail,
+          subject: "Réinitialisation du mot de passe - HAVENA",
+          text:
+            `Bonjour,\n\n` +
+            `Vous avez demandé la réinitialisation de votre mot de passe HAVENA.\n\n` +
+            `Cliquez sur ce lien pour choisir un nouveau mot de passe :\n` +
+            `${resetLink}\n\n` +
+            `Ce lien expire dans 30 minutes.\n\n` +
+            `Si vous n’êtes pas à l’origine de cette demande, ignorez simplement cet email.\n\n` +
+            `HAVENA`,
+        });
+      } catch (mailError) {
+        console.error("Erreur envoi mail reset password :", mailError);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      message:
+        "Si cette adresse email existe, un lien de réinitialisation sera envoyé.",
+    });
+  } catch (err) {
+    console.error("Erreur serveur forgot-password :", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur",
+    });
+  }
+});
+
+app.post("/api/auth/reset-password", async (req, res) => {
+  try {
+    const { email, token, newPassword } = req.body;
+
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedPassword = String(newPassword || "").trim();
+
+    if (!normalizedEmail || !token || !normalizedPassword) {
+      return res.status(400).json({
+        ok: false,
+        message: "Champs obligatoires manquants",
+      });
+    }
+
+    const verification = verifyResetPasswordToken(token, normalizedEmail);
+    if (!verification.ok) {
+      return res.status(400).json({
+        ok: false,
+        message: verification.message || "Lien invalide ou expiré",
+      });
+    }
+
+    const { data: user, error: readError } = await supabase
+      .from("havena_users")
+      .select("*")
+      .eq("email", normalizedEmail)
+      .maybeSingle();
+
+    if (readError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture utilisateur",
+        error: readError.message,
+      });
+    }
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "Compte introuvable",
+      });
+    }
+
+    const { error: updateError } = await supabase
+      .from("havena_users")
+      .update({
+        password: normalizedPassword,
+      })
+      .eq("email", normalizedEmail);
+
+    if (updateError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur mise à jour mot de passe",
+        error: updateError.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Mot de passe réinitialisé avec succès",
+    });
+  } catch (err) {
+    console.error("Erreur serveur reset-password :", err);
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
@@ -551,7 +748,14 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
   try {
     const { montant, prenom, nom, email, reservationId, logementId } = req.body;
 
-    if (!montant || !prenom || !nom || !email || !reservationId || !logementId) {
+    if (
+      !montant ||
+      !prenom ||
+      !nom ||
+      !email ||
+      !reservationId ||
+      !logementId
+    ) {
       return res.status(400).json({
         ok: false,
         message: "Données Stripe manquantes",
@@ -984,10 +1188,7 @@ app.delete("/api/logements/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { error } = await supabase
-      .from("logements")
-      .delete()
-      .eq("id", id);
+    const { error } = await supabase.from("logements").delete().eq("id", id);
 
     if (error) {
       return res.status(500).json({
