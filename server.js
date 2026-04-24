@@ -13,7 +13,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
-const FRONTEND_URL = "https://havena-front.onrender.com";
+const FRONTEND_URL = "https://www.havena1.fr";
 const BACKEND_URL = "https://havena-server.onrender.com";
 const RESET_PASSWORD_SECRET =
   process.env.RESET_PASSWORD_SECRET ||
