@@ -1064,34 +1064,48 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
     const normalizedHebergeurEmail = String(hebergeur_email || "")
       .trim()
       .toLowerCase();
+let image_url = "";
+if (req.file) {
+  const mimeToExt = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/avif": "avif",
+    "image/svg+xml": "svg",
+  };
 
-    let image_url = "";
+  const safeExt =
+    mimeToExt[req.file.mimetype] ||
+    String(req.file.originalname || "").split(".").pop()?.toLowerCase() ||
+    "jpg";
 
-    if (req.file) {
-      const fileExt = req.file.originalname.split(".").pop();
-      const fileName = `logement_${Date.now()}.${fileExt}`;
+  const fileName = `logement_${Date.now()}.${safeExt}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from("logements")
-        .upload(fileName, req.file.buffer, {
-          contentType: req.file.mimetype,
-          upsert: false,
-        });
+  const { data: uploadData, error: uploadError } = await supabase.storage
+    .from("logements")
+    .upload(fileName, req.file.buffer, {
+      contentType: req.file.mimetype,
+      upsert: false,
+    });
 
-      if (uploadError) {
-        return res.status(500).json({
-          ok: false,
-          message: "Erreur upload image",
-          error: uploadError.message,
-        });
-      }
+  if (uploadError) {
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur upload image",
+      error: uploadError.message,
+    });
+  }
 
-      const { data: publicUrlData } = supabase.storage
-        .from("logements")
-        .getPublicUrl(fileName);
+  const uploadedPath = uploadData?.path || fileName;
 
-      image_url = publicUrlData.publicUrl;
-    }
+  const { data: publicUrlData } = supabase.storage
+    .from("logements")
+    .getPublicUrl(uploadedPath);
+
+  image_url = publicUrlData?.publicUrl || "";
+}
 
     let stripeAccountId = "";
 
@@ -1153,6 +1167,129 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
+    });
+  }
+});
+// ===============================
+// DISPONIBILITÉS LOGEMENTS HAVENA
+// ===============================
+
+// Récupérer les disponibilités d’un logement
+app.get("/api/logements/:id/disponibilites", async (req, res) => {
+  try {
+    const logementId = req.params.id;
+
+    const { data, error } = await supabase
+      .from("logement_disponibilites")
+      .select("*")
+      .eq("logement_id", logementId)
+      .order("date_debut", { ascending: true });
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur chargement disponibilités",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      disponibilites: data || [],
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur disponibilités",
+      error: err.message,
+    });
+  }
+});
+
+// Ajouter une période de disponibilité / indisponibilité
+app.post("/api/logements/:id/disponibilites", async (req, res) => {
+  try {
+    const logementId = req.params.id;
+    const {
+      hebergeur_email,
+      date_debut,
+      date_fin,
+      statut = "disponible",
+      type_periode = "manuel",
+      note = "",
+    } = req.body || {};
+
+    if (!logementId || !hebergeur_email || !date_debut || !date_fin) {
+      return res.status(400).json({
+        ok: false,
+        message: "Champs obligatoires manquants",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("logement_disponibilites")
+      .insert([
+        {
+          logement_id: logementId,
+          hebergeur_email,
+          date_debut,
+          date_fin,
+          statut,
+          type_periode,
+          note,
+        },
+      ])
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur ajout disponibilité",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      disponibilite: data,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur ajout disponibilité",
+      error: err.message,
+    });
+  }
+});
+
+// Supprimer une période de disponibilité
+app.delete("/api/logements/disponibilites/:disponibiliteId", async (req, res) => {
+  try {
+    const disponibiliteId = req.params.disponibiliteId;
+
+    const { error } = await supabase
+      .from("logement_disponibilites")
+      .delete()
+      .eq("id", disponibiliteId);
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur suppression disponibilité",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Disponibilité supprimée",
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur suppression disponibilité",
+      error: err.message,
     });
   }
 });
