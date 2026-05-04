@@ -1599,6 +1599,38 @@ app.post("/api/messages/check", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5055;
+// ===============================
+// SAISONNIERS HAVENA
+// ===============================
+
+app.get("/api/saisonniers", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("havena_users")
+      .select("*")
+      .eq("role", "saisonnier")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture saisonniers",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      saisonniers: data || [],
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur saisonniers",
+      error: err.message,
+    });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`HAVENA server lancé sur le port ${PORT}`);
