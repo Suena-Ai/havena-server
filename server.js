@@ -153,7 +153,20 @@ app.post(
         const session = event.data.object;
         const reservationId = session?.metadata?.reservationId;
         const logementId = session?.metadata?.logementId;
+const unlockType = session?.metadata?.type;
+const unlockId = session?.metadata?.unlockId;
+if (unlockType === "message_unlock" && unlockId) {
+  await supabase
+    .from("message_unlocks")
+    .update({
+      payment_status: "paid",
+      unlocked_at: new Date().toISOString(),
+      stripe_session_id: session.id,
+    })
+    .eq("id", unlockId);
 
+  return res.json({ received: true });
+}
         if (reservationId) {
           await supabase
             .from("reservations")
@@ -836,6 +849,174 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
     return res.status(500).json({
       ok: false,
       message: "Erreur Stripe",
+    });
+  }
+});
+// ===============================
+// STRIPE - DÉBLOCAGE MESSAGERIE CANDIDAT 3€
+// ===============================
+
+app.post("/api/stripe/create-message-unlock-session", async (req, res) => {
+  try {
+    const { employerEmail, candidateId } = req.body;
+
+    if (!employerEmail || !candidateId) {
+      return res.status(400).json({
+        ok: false,
+        message: "Données manquantes pour débloquer la messagerie",
+      });
+    }
+
+    const normalizedEmployerEmail = String(employerEmail).trim().toLowerCase();
+    const normalizedCandidateId = Number(candidateId);
+
+    if (!normalizedEmployerEmail || !normalizedCandidateId) {
+      return res.status(400).json({
+        ok: false,
+        message: "Email employeur ou candidat invalide",
+      });
+    }
+
+    const { data: existingUnlock, error: existingError } = await supabase
+      .from("message_unlocks")
+      .select("*")
+      .eq("employer_email", normalizedEmployerEmail)
+      .eq("candidate_id", normalizedCandidateId)
+      .eq("payment_status", "paid")
+      .maybeSingle();
+
+    if (existingError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur vérification déblocage",
+        error: existingError.message,
+      });
+    }
+
+    if (existingUnlock) {
+      return res.json({
+        ok: true,
+        alreadyUnlocked: true,
+        message: "Messagerie déjà débloquée pour ce candidat",
+      });
+    }
+
+    const { data: pendingUnlock, error: insertError } = await supabase
+      .from("message_unlocks")
+      .insert([
+        {
+          employer_email: normalizedEmployerEmail,
+          candidate_id: normalizedCandidateId,
+          amount_cents: 300,
+          payment_status: "pending",
+        },
+      ])
+      .select()
+      .single();
+
+    if (insertError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur création déblocage messagerie",
+        error: insertError.message,
+      });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      customer_email: normalizedEmployerEmail,
+      metadata: {
+        type: "message_unlock",
+        unlockId: String(pendingUnlock.id),
+        employerEmail: normalizedEmployerEmail,
+        candidateId: String(normalizedCandidateId),
+      },
+      line_items: [
+        {
+          price_data: {
+            currency: "eur",
+            product_data: {
+              name: "Déblocage messagerie candidat HAVENA",
+              description: "Ouverture de la messagerie interne avec un candidat",
+            },
+            unit_amount: 300,
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: `${process.env.STRIPE_SUCCESS_URL || "https://www.havena1.fr"}/candidats/${normalizedCandidateId}?message_unlocked=success`,
+      cancel_url: `${process.env.STRIPE_CANCEL_URL || "https://www.havena1.fr"}/candidats/${normalizedCandidateId}?message_unlocked=cancel`,
+    });
+
+    await supabase
+      .from("message_unlocks")
+      .update({
+        stripe_session_id: session.id,
+      })
+      .eq("id", pendingUnlock.id);
+
+    return res.json({
+      ok: true,
+      url: session.url,
+    });
+  } catch (err) {
+    console.error("Erreur création session déblocage messagerie :", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur Stripe déblocage messagerie",
+      error: err.message,
+    });
+  }
+});
+
+// ===============================
+// VÉRIFIER SI LA MESSAGERIE EST DÉBLOQUÉE
+// ===============================
+
+app.get("/api/message-unlocks/check", async (req, res) => {
+  try {
+    const { employerEmail, candidateId } = req.query;
+
+    if (!employerEmail || !candidateId) {
+      return res.status(400).json({
+        ok: false,
+        unlocked: false,
+        message: "Données manquantes",
+      });
+    }
+
+    const normalizedEmployerEmail = String(employerEmail).trim().toLowerCase();
+    const normalizedCandidateId = Number(candidateId);
+
+    const { data, error } = await supabase
+      .from("message_unlocks")
+      .select("*")
+      .eq("employer_email", normalizedEmployerEmail)
+      .eq("candidate_id", normalizedCandidateId)
+      .eq("payment_status", "paid")
+      .maybeSingle();
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        unlocked: false,
+        message: "Erreur vérification messagerie",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      unlocked: !!data,
+    });
+  } catch (err) {
+    console.error("Erreur vérification déblocage messagerie :", err);
+    return res.status(500).json({
+      ok: false,
+      unlocked: false,
+      message: "Erreur serveur vérification messagerie",
+      error: err.message,
     });
   }
 });
