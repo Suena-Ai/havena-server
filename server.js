@@ -1631,6 +1631,39 @@ app.get("/api/saisonniers", async (req, res) => {
     });
   }
 });
+// ===============================
+// CANDIDATS HAVENA
+// Saisonniers + étudiants
+// ===============================
+
+app.get("/api/candidats", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("havena_users")
+      .select("*")
+      .in("role", ["saisonnier", "etudiant"])
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture candidats",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      candidats: data || [],
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur candidats",
+      error: err.message,
+    });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`HAVENA server lancé sur le port ${PORT}`);
