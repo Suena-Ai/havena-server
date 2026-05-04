@@ -1845,6 +1845,87 @@ app.get("/api/candidats", async (req, res) => {
     });
   }
 });
+// ===============================
+// MISE À JOUR PROFIL CANDIDAT HAVENA
+// Saisonnier / Étudiant
+// ===============================
+
+app.put("/api/candidats/profil", async (req, res) => {
+  try {
+    const {
+      email,
+      poste_recherche,
+      mois_disponible,
+      periode_disponible,
+      niveau_etudes,
+      diplomes,
+      formation,
+      experiences,
+      competences,
+      langues,
+      permis,
+      mobilite,
+      type_contrat_recherche,
+      secteur_recherche,
+      presentation,
+    } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        ok: false,
+        message: "Email utilisateur manquant",
+      });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    const updatePayload = {
+      poste_recherche: poste_recherche || null,
+      mois_disponible: mois_disponible || null,
+      periode_disponible: periode_disponible || null,
+      niveau_etudes: niveau_etudes || null,
+      diplomes: diplomes || null,
+      formation: formation || null,
+      experiences: experiences || null,
+      competences: competences || null,
+      langues: langues || null,
+      permis: permis || null,
+      mobilite: mobilite || null,
+      type_contrat_recherche: type_contrat_recherche || null,
+      secteur_recherche: secteur_recherche || null,
+      presentation: presentation || null,
+    };
+
+    const { data, error } = await supabase
+      .from("havena_users")
+      .update(updatePayload)
+      .eq("email", normalizedEmail)
+      .in("role", ["saisonnier", "etudiant"])
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur mise à jour profil candidat",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Profil candidat mis à jour",
+      candidat: data,
+    });
+  } catch (err) {
+    console.error("Erreur serveur mise à jour profil candidat :", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur mise à jour profil candidat",
+      error: err.message,
+    });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`HAVENA server lancé sur le port ${PORT}`);
