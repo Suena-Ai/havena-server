@@ -346,6 +346,35 @@ app.post("/api/auth/register", async (req, res) => {
           "Cette adresse email est déjà utilisée pour ce profil. Veuillez vous connecter.",
       });
     }
+const publicRegisterCandidateFields = [
+  poste_recherche,
+  mois_disponible,
+  periode_disponible,
+  niveau_etudes,
+  diplomes,
+  formation,
+  experiences,
+  competences,
+  langues,
+  permis,
+  mobilite,
+  type_contrat_recherche,
+  secteur_recherche,
+  presentation,
+];
+
+if (
+  (normalizedRole === "saisonnier" || normalizedRole === "etudiant") &&
+  publicRegisterCandidateFields.some((field) =>
+    containsForbiddenContactInfo(field)
+  )
+) {
+  return res.status(400).json({
+    ok: false,
+    message:
+      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+  });
+}
 
    const newUser = {
   first_name: String(firstName).trim(),
@@ -2073,6 +2102,34 @@ app.put("/api/candidats/profil", async (req, res) => {
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
+const publicCandidateProfileFields = [
+  poste_recherche,
+  mois_disponible,
+  periode_disponible,
+  niveau_etudes,
+  diplomes,
+  formation,
+  experiences,
+  competences,
+  langues,
+  permis,
+  mobilite,
+  type_contrat_recherche,
+  secteur_recherche,
+  presentation,
+];
+
+if (
+  publicCandidateProfileFields.some((field) =>
+    containsForbiddenContactInfo(field)
+  )
+) {
+  return res.status(400).json({
+    ok: false,
+    message:
+      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+  });
+}
 
     const updatePayload = {
       poste_recherche: poste_recherche || null,
