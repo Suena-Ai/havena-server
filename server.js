@@ -1281,6 +1281,41 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
         message: "Champs obligatoires manquants",
       });
     }
+const publicLogementFields = [
+  titre,
+  type,
+  ville,
+  adresse,
+  surface,
+  chambres,
+  couchages,
+  prix,
+  animaux_acceptes,
+  fumeur_accepte,
+  equipements,
+  description,
+  statut,
+  jardin,
+  parking,
+  wifi,
+  disponibilites,
+];
+
+if (publicLogementFields.some((field) => containsForbiddenContactInfo(field))) {
+  return res.status(400).json({
+    ok: false,
+    message:
+      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+  });
+}
+
+if (telephone && containsForbiddenContactInfo(telephone)) {
+  return res.status(400).json({
+    ok: false,
+    message:
+      "Le téléphone ne doit pas être publié dans une annonce. Le contact doit passer par la messagerie HAVENA.",
+  });
+}
 
     const normalizedHebergeurEmail = String(hebergeur_email || "")
       .trim()
@@ -1571,7 +1606,66 @@ app.delete("/api/logements/:id", async (req, res) => {
 app.put("/api/logements/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { disponibilites } = req.body;
+   const {
+  disponibilites,
+  titre,
+  type,
+  ville,
+  adresse,
+  surface,
+  chambres,
+  couchages,
+  prix,
+  animaux_acceptes,
+  fumeur_accepte,
+  equipements,
+  description,
+  statut,
+  jardin,
+  parking,
+  wifi,
+  telephone,
+} = req.body;
+const publicLogementUpdateFields = [
+  titre,
+  type,
+  ville,
+  adresse,
+  surface,
+  chambres,
+  couchages,
+  prix,
+  animaux_acceptes,
+  fumeur_accepte,
+  equipements,
+  description,
+  statut,
+  jardin,
+  parking,
+  wifi,
+  disponibilites,
+];
+
+if (
+  publicLogementUpdateFields.some((field) =>
+    containsForbiddenContactInfo(field)
+  )
+) {
+  return res.status(400).json({
+    ok: false,
+    message:
+      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+  });
+}
+
+if (telephone && containsForbiddenContactInfo(telephone)) {
+  return res.status(400).json({
+    ok: false,
+    message:
+      "Le téléphone ne doit pas être publié dans une annonce. Le contact doit passer par la messagerie HAVENA.",
+  });
+}
+
 
     const { data, error } = await supabase
       .from("logements")
@@ -1621,6 +1715,24 @@ app.post("/api/offres-emploi", async (req, res) => {
         message: "Champs obligatoires manquants",
       });
     }
+const publicOffreFields = [
+  titre,
+  ville,
+  contrat,
+  periode,
+  salaire,
+  profil,
+  description,
+  statut,
+];
+
+if (publicOffreFields.some((field) => containsForbiddenContactInfo(field))) {
+  return res.status(400).json({
+    ok: false,
+    message:
+      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+  });
+}
 
     const offre = {
       titre,
@@ -1714,6 +1826,28 @@ app.put("/api/offres-emploi/:id", async (req, res) => {
         message: "Champs obligatoires manquants",
       });
     }
+const publicOffreUpdateFields = [
+  titre,
+  ville,
+  contrat,
+  periode,
+  salaire,
+  profil,
+  description,
+  statut,
+];
+
+if (
+  publicOffreUpdateFields.some((field) =>
+    containsForbiddenContactInfo(field)
+  )
+) {
+  return res.status(400).json({
+    ok: false,
+    message:
+      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+  });
+}
 
     const { data, error } = await supabase
       .from("offres_emploi")
