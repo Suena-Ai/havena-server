@@ -276,7 +276,28 @@ app.get("/", (req, res) => {
 
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const { firstName, lastName, email, password, role } = req.body;
+ const {
+  firstName,
+  lastName,
+  email,
+  password,
+  role,
+  poste_recherche,
+  mois_disponible,
+  periode_disponible,
+  niveau_etudes,
+  diplomes,
+  formation,
+  experiences,
+  competences,
+  langues,
+  permis,
+  mobilite,
+  type_contrat_recherche,
+  secteur_recherche,
+  presentation,
+} = req.body;
+
 
     if (!firstName || !lastName || !email || !password || !role) {
       return res.status(400).json({
@@ -326,15 +347,34 @@ app.post("/api/auth/register", async (req, res) => {
       });
     }
 
-    const newUser = {
-      first_name: String(firstName).trim(),
-      last_name: String(lastName).trim(),
-      email: normalizedEmail,
-      password: String(password),
-      role: normalizedRole,
-      email_confirmed: false,
-      created_at: new Date().toISOString(),
-    };
+   const newUser = {
+  first_name: String(firstName).trim(),
+  last_name: String(lastName).trim(),
+  email: normalizedEmail,
+  password: String(password),
+  role: normalizedRole,
+  email_confirmed: false,
+  created_at: new Date().toISOString(),
+
+  ...(normalizedRole === "saisonnier" || normalizedRole === "etudiant"
+    ? {
+        poste_recherche: poste_recherche || null,
+        mois_disponible: mois_disponible || null,
+        periode_disponible: periode_disponible || null,
+        niveau_etudes: niveau_etudes || null,
+        diplomes: diplomes || null,
+        formation: formation || null,
+        experiences: experiences || null,
+        competences: competences || null,
+        langues: langues || null,
+        permis: permis || null,
+        mobilite: mobilite || null,
+        type_contrat_recherche: type_contrat_recherche || null,
+        secteur_recherche: secteur_recherche || null,
+        presentation: presentation || null,
+      }
+    : {}),
+};
 
     const { data, error } = await supabase
       .from("havena_users")
@@ -1821,7 +1861,28 @@ app.get("/api/candidats", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("havena_users")
-      .select("*")
+ .select(`
+  id,
+  first_name,
+  last_name,
+  role,
+  poste_recherche,
+  mois_disponible,
+  periode_disponible,
+  niveau_etudes,
+  diplomes,
+  formation,
+  experiences,
+  competences,
+  langues,
+  permis,
+  mobilite,
+  type_contrat_recherche,
+  secteur_recherche,
+  presentation,
+  created_at
+`)
+
       .in("role", ["saisonnier", "etudiant"])
       .order("created_at", { ascending: false });
 
