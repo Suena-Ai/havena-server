@@ -1736,6 +1736,7 @@ app.post("/api/offres-emploi", async (req, res) => {
       profil,
       description,
       statut,
+      employeur_email,
     } = req.body;
 
     if (!titre || !ville || !contrat) {
@@ -1772,6 +1773,7 @@ if (publicOffreFields.some((field) => containsForbiddenContactInfo(field))) {
       profil: profil || "",
       description: description || "",
       statut: statut || "Offre active",
+      employeur_email: employeur_email ? String(employeur_email).trim().toLowerCase() : "",
     };
 
     const { data, error } = await supabase
@@ -1950,8 +1952,242 @@ app.delete("/api/offres-emploi/:id", async (req, res) => {
     });
   }
 });
+app.post("/api/candidatures-emploi", async (req, res) => {
+  try {
+    const {
+      offre_id,
+      offre_titre,
+      ville,
+      contrat,
+      periode,
+      salaire,
+      candidat_email,
+      candidat_nom,
+      candidat_prenom,
+      cv_experience,
+      message,
+    } = req.body;
 
+    if (!offre_titre || !ville || !contrat) {
+      return res.status(400).json({
+        ok: false,
+        message: "Informations de l’offre manquantes",
+      });
+    }
+
+    const publicCandidatureFields = [
+      cv_experience,
+      message,
+    ];
+
+    if (
+      publicCandidatureFields.some((field) =>
+        containsForbiddenContactInfo(field)
+      )
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+      });
+    }
+
+    const candidature = {
+      offre_id: offre_id || null,
+      offre_titre,
+      ville,
+      contrat,
+      periode: periode || "",
+      salaire: salaire || "",
+      candidat_email: candidat_email || "",
+      candidat_nom: candidat_nom || "",
+      candidat_prenom: candidat_prenom || "",
+      cv_experience: cv_experience || "",
+      message: message || "",
+      statut: "nouvelle",
+      created_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("candidatures_emploi")
+      .insert([candidature])
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur enregistrement candidature",
+        error: error.message,
+      });
+    }
+
+    return res.status(201).json({
+      ok: true,
+      message: "Candidature envoyée",
+      candidature: data,
+    });
+  } catch (err) {
+    console.error("Erreur serveur candidature emploi :", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur candidature emploi",
+      error: err.message,
+    });
+  }
+});  
+  // ===============================
+// CANDIDATURES EMPLOI HAVENA
+// Candidat répond -> employeur reçoit
+// ===============================
+app.post("/api/candidatures-emploi", async (req, res) => {
+  try {
+    const {
+      offre_id,
+      offre_titre,
+      ville,
+      contrat,
+      periode,
+      salaire,
+      candidat_email,
+      candidat_nom,
+      candidat_prenom,
+      cv_experience,
+      message,
+    } = req.body;
+
+    if (!offre_titre || !ville || !contrat) {
+      return res.status(400).json({
+        ok: false,
+        message: "Informations de l’offre manquantes",
+      });
+    }
+
+    const publicCandidatureFields = [cv_experience, message];
+
+    if (
+      publicCandidatureFields.some((field) =>
+        containsForbiddenContactInfo(field)
+      )
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+      });
+    }
+
+    let employeurEmail = "";
+
+    if (offre_id) {
+      const { data: offreData, error: offreError } = await supabase
+        .from("offres_emploi")
+        .select("*")
+        .eq("id", Number(offre_id))
+        .maybeSingle();
+
+      if (offreError) {
+        return res.status(500).json({
+          ok: false,
+          message: "Erreur lecture offre emploi",
+          error: offreError.message,
+        });
+      }
+
+      if (offreData?.employeur_email) {
+        employeurEmail = String(offreData.employeur_email)
+          .trim()
+          .toLowerCase();
+      }
+    }
+
+    if (!employeurEmail) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Email employeur introuvable pour cette offre. Impossible d’envoyer la candidature.",
+      });
+    }
+
+    const candidature = {
+      offre_id: offre_id || null,
+      offre_titre,
+      ville,
+      contrat,
+      periode: periode || "",
+      salaire: salaire || "",
+      candidat_email: candidat_email || "",
+      candidat_nom: candidat_nom || "",
+      candidat_prenom: candidat_prenom || "",
+      cv_experience: cv_experience || "",
+      message: message || "",
+      employeur_email: employeurEmail,
+      statut: "nouvelle",
+      created_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("candidatures_emploi")
+      .insert([candidature])
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur enregistrement candidature",
+        error: error.message,
+      });
+    }
+
+    try {
+      await transporter.sendMail({
+        from: process.env.MAIL_USER,
+        to: employeurEmail,
+        subject: "Nouvelle candidature reçue - HAVENA",
+        text:
+          `Bonjour,\n\n` +
+          `Vous avez reçu une nouvelle candidature sur HAVENA.\n\n` +
+          `Offre : ${offre_titre}\n` +
+          `Ville : ${ville}\n` +
+          `Contrat : ${contrat}\n` +
+          `Période : ${periode || ""}\n` +
+          `Salaire : ${salaire || ""}\n\n` +
+          `Candidat : ${candidat_prenom || ""} ${candidat_nom || ""}\n` +
+          `Email candidat : ${candidat_email || ""}\n\n` +
+          `CV / expérience :\n${cv_experience || ""}\n\n` +
+          `Message :\n${message || ""}\n\n` +
+          `HAVENA`,
+      });
+    } catch (mailError) {
+      console.error("Erreur email employeur candidature :", mailError);
+
+      return res.status(500).json({
+        ok: false,
+        message:
+          "Candidature enregistrée, mais erreur lors de l’envoi email employeur.",
+        candidature: data,
+      });
+    }
+
+    return res.status(201).json({
+      ok: true,
+      message: "Candidature envoyée à l’employeur",
+      candidature: data,
+    });
+  } catch (err) {
+    console.error("Erreur serveur candidature emploi :", err);
+
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur candidature emploi",
+      error: err.message,
+    });
+  }
+});
+                                                                                                                
 app.post("/api/messages/check", async (req, res) => {
+
   try {
     const { message } = req.body;
 
