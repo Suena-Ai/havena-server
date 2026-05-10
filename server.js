@@ -2056,7 +2056,7 @@ app.post("/api/candidatures-emploi", async (req, res) => {
       cv_experience,
       message,
     } = req.body;
-
+let employeurEmail = "";
     if (!offre_titre || !ville || !contrat) {
       return res.status(400).json({
         ok: false,
@@ -2078,7 +2078,7 @@ app.post("/api/candidatures-emploi", async (req, res) => {
       });
     }
 
-    let employeurEmail = "";
+  
 
     if (offre_id) {
       const { data: offreData, error: offreError } = await supabase
