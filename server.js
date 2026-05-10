@@ -2004,6 +2004,7 @@ app.post("/api/candidatures-emploi", async (req, res) => {
       candidat_prenom: candidat_prenom || "",
       cv_experience: cv_experience || "",
       message: message || "",
+      employeur_email: employeurEmail,
       statut: "nouvelle",
       created_at: new Date().toISOString(),
     };
