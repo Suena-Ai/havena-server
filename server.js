@@ -72,7 +72,15 @@ function containsForbiddenContactInfo(text = "") {
     "exterieur",
   ];
 
-  const hasForbiddenWord = forbiddenWords.some((word) => value.includes(word));
+ const hasForbiddenWord = forbiddenWords.some((word) => {
+  const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  if (word === "tel") {
+    return new RegExp(`(^|\\s|[.,;:!?()\\-])${escapedWord}(\\s|$|[.,;:!?()\\-])`, "i").test(value);
+  }
+
+  return value.includes(word);
+});
 
   return (
     phoneRegex.test(text) ||
