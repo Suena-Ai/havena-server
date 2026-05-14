@@ -356,6 +356,30 @@ app.post("/api/auth/register", async (req, res) => {
           "Cette adresse email est déjà utilisée pour ce profil. Veuillez vous connecter.",
       });
     }
+const requiredCandidateFields = [
+  poste_recherche,
+  mois_disponible,
+  periode_disponible,
+  niveau_etudes,
+  experiences,
+  competences,
+  langues,
+  mobilite,
+  type_contrat_recherche,
+  secteur_recherche,
+  presentation,
+];
+
+if (
+  (normalizedRole === "saisonnier" || normalizedRole === "etudiant") &&
+  requiredCandidateFields.some((field) => !String(field || "").trim())
+) {
+  return res.status(400).json({
+    ok: false,
+    message:
+      "Pour créer un compte candidat HAVENA, veuillez compléter les informations essentielles de votre profil : poste recherché, disponibilité, expérience, compétences, langues, mobilité, type de contrat, secteur recherché et présentation.",
+  });
+}
 
     const publicRegisterCandidateFields = [
       poste_recherche,
