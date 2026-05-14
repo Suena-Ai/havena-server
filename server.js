@@ -81,6 +81,60 @@ function containsForbiddenContactInfo(text = "") {
     hasForbiddenWord
   );
 }
+function buildEmailConfirmToken(email) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const expiresAt = Date.now() + 1000 * 60 * 60 * 24;
+  const payload = `confirm-email|${normalizedEmail}|${expiresAt}`;
+
+  const signature = crypto
+    .createHmac("sha256", RESET_PASSWORD_SECRET)
+    .update(payload)
+    .digest("hex");
+
+  return Buffer.from(`${payload}|${signature}`).toString("base64url");
+}
+
+function verifyEmailConfirmToken(token, email) {
+  try {
+    if (!token) {
+      return { ok: false, message: "Token manquant" };
+    }
+
+    const decoded = Buffer.from(String(token), "base64url").toString("utf8");
+    const [type, tokenEmail, expiresAtRaw, signature] = decoded.split("|");
+
+    if (type !== "confirm-email" || !tokenEmail || !expiresAtRaw || !signature) {
+      return { ok: false, message: "Token invalide" };
+    }
+
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+
+    if (tokenEmail !== normalizedEmail) {
+      return { ok: false, message: "Email invalide pour ce lien" };
+    }
+
+    const payload = `${type}|${tokenEmail}|${expiresAtRaw}`;
+
+    const expectedSignature = crypto
+      .createHmac("sha256", RESET_PASSWORD_SECRET)
+      .update(payload)
+      .digest("hex");
+
+    if (signature !== expectedSignature) {
+      return { ok: false, message: "Signature invalide" };
+    }
+
+    const expiresAt = Number(expiresAtRaw);
+
+    if (!expiresAt || Date.now() > expiresAt) {
+      return { ok: false, message: "Lien expiré" };
+    }
+
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: "Token invalide" };
+  }
+}
 
 function buildResetPasswordToken(email) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
@@ -463,6 +517,29 @@ if (
         error: error.message,
       });
     }
+const confirmToken = buildEmailConfirmToken(normalizedEmail);
+
+const confirmLink = `${FRONTEND_URL}/confirm-email?token=${encodeURIComponent(
+  confirmToken
+)}&email=${encodeURIComponent(normalizedEmail)}`;
+
+try {
+  await transporter.sendMail({
+    from: process.env.MAIL_USER,
+    to: normalizedEmail,
+    subject: "Confirmez votre adresse email - HAVENA",
+    text:
+      `Bonjour ${String(firstName).trim()},\n\n` +
+      `Votre compte HAVENA a bien été créé.\n\n` +
+      `Pour activer votre compte, cliquez sur ce lien :\n` +
+      `${confirmLink}\n\n` +
+      `Ce lien est valable 24 heures.\n\n` +
+      `Si vous n’êtes pas à l’origine de cette inscription, ignorez cet email.\n\n` +
+      `HAVENA`,
+  });
+} catch (mailError) {
+  console.error("Erreur envoi email confirmation :", mailError);
+}
 
     return res.status(201).json({
       ok: true,
@@ -528,7 +605,20 @@ app.post("/api/auth/login", async (req, res) => {
         message: `Cette adresse email est déjà liée au profil "${user.role}".`,
       });
     }
-
+if (!user.email_confirmed) {
+  return res.status(403).json({
+    ok: false,
+    message:
+      "Veuillez confirmer votre adresse email avant de vous connecter. Un lien de confirmation vous a été envoyé par email.",
+  });
+}
+if (!user.email_confirmed) {
+  return res.status(403).json({
+    ok: false,
+    message:
+      "Veuillez confirmer votre adresse email avant de vous connecter. Un lien de confirmation vous a été envoyé par email.",
+  });
+}
     const storedPassword = String(user.password || "");
     const incomingPassword = String(password || "");
 
@@ -574,6 +664,58 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
+    });
+  }
+});
+app.get("/api/auth/confirm-email", async (req, res) => {
+  try {
+    const { token, email } = req.query;
+
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+
+    if (!token || !normalizedEmail) {
+      return res.status(400).json({
+        ok: false,
+        message: "Lien de confirmation invalide.",
+      });
+    }
+
+    const verification = verifyEmailConfirmToken(token, normalizedEmail);
+
+    if (!verification.ok) {
+      return res.status(400).json({
+        ok: false,
+        message: verification.message || "Lien de confirmation invalide ou expiré.",
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("havena_users")
+      .update({
+        email_confirmed: true,
+      })
+      .eq("email", normalizedEmail)
+      .select("id, email, role, email_confirmed")
+      .single();
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur confirmation email.",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Adresse email confirmée avec succès.",
+      user: data,
+    });
+  } catch (err) {
+    console.error("Erreur serveur confirmation email :", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur confirmation email.",
     });
   }
 });
