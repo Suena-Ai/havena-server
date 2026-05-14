@@ -6,6 +6,7 @@ const supabase = require("./supabase");
 const Stripe = require("stripe");
 const transporter = require("./mailer");
 const multer = require("multer");
+const bcrypt = require("bcryptjs");
 
 dotenv.config();
 
@@ -15,6 +16,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const FRONTEND_URL = "https://www.havena1.fr";
 const BACKEND_URL = "https://havena-server.onrender.com";
+
 const RESET_PASSWORD_SECRET =
   process.env.RESET_PASSWORD_SECRET ||
   process.env.STRIPE_WEBHOOK_SECRET ||
@@ -22,9 +24,12 @@ const RESET_PASSWORD_SECRET =
 
 function containsForbiddenContactInfo(text = "") {
   const value = String(text || "").toLowerCase().trim();
+
   const phoneRegex =
     /(?:\+?\d{1,3}[\s.\-]?)?(?:\(?\d{2,4}\)?[\s.\-]?)?\d{2,4}[\s.\-]?\d{2,4}[\s.\-]?\d{2,4}/i;
+
   const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}/i;
+
   const linkRegex =
     /(https?:\/\/|www\.|\.com\b|\.fr\b|\.net\b|\.org\b|t\.me\b|wa\.me\b)/i;
 
@@ -81,6 +86,7 @@ function buildResetPasswordToken(email) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const expiresAt = Date.now() + 1000 * 60 * 30;
   const payload = `${normalizedEmail}|${expiresAt}`;
+
   const signature = crypto
     .createHmac("sha256", RESET_PASSWORD_SECRET)
     .update(payload)
@@ -103,11 +109,13 @@ function verifyResetPasswordToken(token, email) {
     }
 
     const normalizedEmail = String(email || "").trim().toLowerCase();
+
     if (tokenEmail !== normalizedEmail) {
       return { ok: false, message: "Email invalide pour ce lien" };
     }
 
     const payload = `${tokenEmail}|${expiresAtRaw}`;
+
     const expectedSignature = crypto
       .createHmac("sha256", RESET_PASSWORD_SECRET)
       .update(payload)
@@ -118,6 +126,7 @@ function verifyResetPasswordToken(token, email) {
     }
 
     const expiresAt = Number(expiresAtRaw);
+
     if (!expiresAt || Date.now() > expiresAt) {
       return { ok: false, message: "Lien expiré" };
     }
@@ -153,20 +162,22 @@ app.post(
         const session = event.data.object;
         const reservationId = session?.metadata?.reservationId;
         const logementId = session?.metadata?.logementId;
-const unlockType = session?.metadata?.type;
-const unlockId = session?.metadata?.unlockId;
-if (unlockType === "message_unlock" && unlockId) {
-  await supabase
-    .from("message_unlocks")
-    .update({
-      payment_status: "paid",
-      unlocked_at: new Date().toISOString(),
-      stripe_session_id: session.id,
-    })
-    .eq("id", unlockId);
+        const unlockType = session?.metadata?.type;
+        const unlockId = session?.metadata?.unlockId;
 
-  return res.json({ received: true });
-}
+        if (unlockType === "message_unlock" && unlockId) {
+          await supabase
+            .from("message_unlocks")
+            .update({
+              payment_status: "paid",
+              unlocked_at: new Date().toISOString(),
+              stripe_session_id: session.id,
+            })
+            .eq("id", unlockId);
+
+          return res.json({ received: true });
+        }
+
         if (reservationId) {
           await supabase
             .from("reservations")
@@ -276,28 +287,27 @@ app.get("/", (req, res) => {
 
 app.post("/api/auth/register", async (req, res) => {
   try {
- const {
-  firstName,
-  lastName,
-  email,
-  password,
-  role,
-  poste_recherche,
-  mois_disponible,
-  periode_disponible,
-  niveau_etudes,
-  diplomes,
-  formation,
-  experiences,
-  competences,
-  langues,
-  permis,
-  mobilite,
-  type_contrat_recherche,
-  secteur_recherche,
-  presentation,
-} = req.body;
-
+    const {
+      firstName,
+      lastName,
+      email,
+      password,
+      role,
+      poste_recherche,
+      mois_disponible,
+      periode_disponible,
+      niveau_etudes,
+      diplomes,
+      formation,
+      experiences,
+      competences,
+      langues,
+      permis,
+      mobilite,
+      type_contrat_recherche,
+      secteur_recherche,
+      presentation,
+    } = req.body;
 
     if (!firstName || !lastName || !email || !password || !role) {
       return res.status(400).json({
@@ -308,6 +318,7 @@ app.post("/api/auth/register", async (req, res) => {
 
     const normalizedEmail = String(email).trim().toLowerCase();
     const normalizedRole = String(role).trim().toLowerCase();
+
     const allowedRoles = ["saisonnier", "etudiant", "employeur", "hebergeur"];
 
     if (!allowedRoles.includes(normalizedRole)) {
@@ -319,7 +330,7 @@ app.post("/api/auth/register", async (req, res) => {
 
     const { data: existingUser, error: existingError } = await supabase
       .from("havena_users")
-      .select("*")
+      .select("id, email, role")
       .eq("email", normalizedEmail)
       .maybeSingle();
 
@@ -335,8 +346,7 @@ app.post("/api/auth/register", async (req, res) => {
       if (existingUser.role !== normalizedRole) {
         return res.status(409).json({
           ok: false,
-          message:
-            "Cette adresse email est déjà utilisée avec un autre profil.",
+          message: "Cette adresse email est déjà utilisée avec un autre profil.",
         });
       }
 
@@ -346,69 +356,81 @@ app.post("/api/auth/register", async (req, res) => {
           "Cette adresse email est déjà utilisée pour ce profil. Veuillez vous connecter.",
       });
     }
-const publicRegisterCandidateFields = [
-  poste_recherche,
-  mois_disponible,
-  periode_disponible,
-  niveau_etudes,
-  diplomes,
-  formation,
-  experiences,
-  competences,
-  langues,
-  permis,
-  mobilite,
-  type_contrat_recherche,
-  secteur_recherche,
-  presentation,
-];
 
-if (
-  (normalizedRole === "saisonnier" || normalizedRole === "etudiant") &&
-  publicRegisterCandidateFields.some((field) =>
-    containsForbiddenContactInfo(field)
-  )
-) {
-  return res.status(400).json({
-    ok: false,
-    message:
-      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
-  });
-}
+    const publicRegisterCandidateFields = [
+      poste_recherche,
+      mois_disponible,
+      periode_disponible,
+      niveau_etudes,
+      diplomes,
+      formation,
+      experiences,
+      competences,
+      langues,
+      permis,
+      mobilite,
+      type_contrat_recherche,
+      secteur_recherche,
+      presentation,
+    ];
 
-   const newUser = {
-  first_name: String(firstName).trim(),
-  last_name: String(lastName).trim(),
-  email: normalizedEmail,
-  password: String(password),
-  role: normalizedRole,
-  email_confirmed: false,
-  created_at: new Date().toISOString(),
+    if (
+      (normalizedRole === "saisonnier" || normalizedRole === "etudiant") &&
+      publicRegisterCandidateFields.some((field) =>
+        containsForbiddenContactInfo(field)
+      )
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+      });
+    }
 
-  ...(normalizedRole === "saisonnier" || normalizedRole === "etudiant"
-    ? {
-        poste_recherche: poste_recherche || null,
-        mois_disponible: mois_disponible || null,
-        periode_disponible: periode_disponible || null,
-        niveau_etudes: niveau_etudes || null,
-        diplomes: diplomes || null,
-        formation: formation || null,
-        experiences: experiences || null,
-        competences: competences || null,
-        langues: langues || null,
-        permis: permis || null,
-        mobilite: mobilite || null,
-        type_contrat_recherche: type_contrat_recherche || null,
-        secteur_recherche: secteur_recherche || null,
-        presentation: presentation || null,
-      }
-    : {}),
-};
+    const hashedPassword = await bcrypt.hash(String(password), 12);
+
+    const newUser = {
+      first_name: String(firstName).trim(),
+      last_name: String(lastName).trim(),
+      email: normalizedEmail,
+      password: hashedPassword,
+      role: normalizedRole,
+      email_confirmed: false,
+      created_at: new Date().toISOString(),
+      ...(normalizedRole === "saisonnier" || normalizedRole === "etudiant"
+        ? {
+            poste_recherche: poste_recherche || null,
+            mois_disponible: mois_disponible || null,
+            periode_disponible: periode_disponible || null,
+            niveau_etudes: niveau_etudes || null,
+            diplomes: diplomes || null,
+            formation: formation || null,
+            experiences: experiences || null,
+            competences: competences || null,
+            langues: langues || null,
+            permis: permis || null,
+            mobilite: mobilite || null,
+            type_contrat_recherche: type_contrat_recherche || null,
+            secteur_recherche: secteur_recherche || null,
+            presentation: presentation || null,
+          }
+        : {}),
+    };
 
     const { data, error } = await supabase
       .from("havena_users")
       .insert([newUser])
-      .select();
+      .select(`
+        id,
+        first_name,
+        last_name,
+        email,
+        role,
+        email_confirmed,
+        stripe_account_id,
+        created_at
+      `)
+      .single();
 
     if (error) {
       return res.status(500).json({
@@ -421,7 +443,7 @@ if (
     return res.status(201).json({
       ok: true,
       message: "Compte créé",
-      user: data[0],
+      user: data,
     });
   } catch (err) {
     console.error("Erreur serveur register :", err);
@@ -448,7 +470,16 @@ app.post("/api/auth/login", async (req, res) => {
 
     const { data: user, error } = await supabase
       .from("havena_users")
-      .select("*")
+      .select(`
+        id,
+        email,
+        password,
+        role,
+        first_name,
+        last_name,
+        email_confirmed,
+        stripe_account_id
+      `)
       .eq("email", normalizedEmail)
       .maybeSingle();
 
@@ -474,7 +505,27 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
-    if (String(user.password) !== String(password)) {
+    const storedPassword = String(user.password || "");
+    const incomingPassword = String(password || "");
+
+    let passwordIsValid = false;
+
+    if (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$")) {
+      passwordIsValid = await bcrypt.compare(incomingPassword, storedPassword);
+    } else {
+      passwordIsValid = storedPassword === incomingPassword;
+
+      if (passwordIsValid) {
+        const hashedPassword = await bcrypt.hash(incomingPassword, 12);
+
+        await supabase
+          .from("havena_users")
+          .update({ password: hashedPassword })
+          .eq("email", normalizedEmail);
+      }
+    }
+
+    if (!passwordIsValid) {
       return res.status(401).json({
         ok: false,
         message: "Mot de passe incorrect.",
@@ -506,7 +557,6 @@ app.post("/api/auth/login", async (req, res) => {
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
     const { email } = req.body;
-
     const normalizedEmail = String(email || "").trim().toLowerCase();
 
     if (!normalizedEmail) {
@@ -518,7 +568,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 
     const { data: user, error } = await supabase
       .from("havena_users")
-      .select("*")
+      .select("id, email")
       .eq("email", normalizedEmail)
       .maybeSingle();
 
@@ -532,6 +582,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 
     if (user) {
       const token = buildResetPasswordToken(normalizedEmail);
+
       const resetLink = `${FRONTEND_URL}/reset-password?token=${encodeURIComponent(
         token
       )}&email=${encodeURIComponent(normalizedEmail)}`;
@@ -584,6 +635,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
     }
 
     const verification = verifyResetPasswordToken(token, normalizedEmail);
+
     if (!verification.ok) {
       return res.status(400).json({
         ok: false,
@@ -593,7 +645,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
 
     const { data: user, error: readError } = await supabase
       .from("havena_users")
-      .select("*")
+      .select("id, email")
       .eq("email", normalizedEmail)
       .maybeSingle();
 
@@ -612,10 +664,12 @@ app.post("/api/auth/reset-password", async (req, res) => {
       });
     }
 
+    const hashedPassword = await bcrypt.hash(normalizedPassword, 12);
+
     const { error: updateError } = await supabase
       .from("havena_users")
       .update({
-        password: normalizedPassword,
+        password: hashedPassword,
       })
       .eq("email", normalizedEmail);
 
@@ -659,7 +713,7 @@ app.post("/api/stripe/connect/start", async (req, res) => {
 
     const { data: existingUser, error: userError } = await supabase
       .from("havena_users")
-      .select("*")
+      .select("id, email, role, stripe_account_id")
       .eq("email", normalizedEmail)
       .maybeSingle();
 
@@ -743,6 +797,7 @@ app.get("/api/stripe/connect/complete", async (req, res) => {
 
     const stripeAccountId = String(account).trim();
     const normalizedEmail = String(email).trim().toLowerCase();
+
     const stripeAccount = await stripe.accounts.retrieve(stripeAccountId);
 
     await supabase
@@ -787,7 +842,7 @@ app.get("/api/stripe/connect/status", async (req, res) => {
 
     const { data: user, error } = await supabase
       .from("havena_users")
-      .select("*")
+      .select("id, email, stripe_account_id")
       .eq("email", normalizedEmail)
       .maybeSingle();
 
@@ -889,7 +944,9 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
           price_data: {
             currency: "eur",
             product_data: {
-              name: `Réservation HAVENA - ${logement.titre || `${prenom} ${nom}`}`,
+              name: `Réservation HAVENA - ${
+                logement.titre || `${prenom} ${nom}`
+              }`,
             },
             unit_amount: unitAmount,
           },
@@ -921,6 +978,7 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
     });
   }
 });
+
 // ===============================
 // STRIPE - DÉBLOCAGE MESSAGERIE CANDIDAT 3€
 // ===============================
@@ -1014,8 +1072,12 @@ app.post("/api/stripe/create-message-unlock-session", async (req, res) => {
           quantity: 1,
         },
       ],
-      success_url: `${process.env.STRIPE_SUCCESS_URL || "https://www.havena1.fr"}/candidats/${normalizedCandidateId}?message_unlocked=success`,
-      cancel_url: `${process.env.STRIPE_CANCEL_URL || "https://www.havena1.fr"}/candidats/${normalizedCandidateId}?message_unlocked=cancel`,
+      success_url: `${
+        process.env.STRIPE_SUCCESS_URL || FRONTEND_URL
+      }/candidats/${normalizedCandidateId}?message_unlocked=success`,
+      cancel_url: `${
+        process.env.STRIPE_CANCEL_URL || FRONTEND_URL
+      }/candidats/${normalizedCandidateId}?message_unlocked=cancel`,
     });
 
     await supabase
@@ -1310,87 +1372,92 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
         message: "Champs obligatoires manquants",
       });
     }
-const publicLogementFields = [
-  titre,
-  type,
-  ville,
-  adresse,
-  surface,
-  chambres,
-  couchages,
-  prix,
-  animaux_acceptes,
-  fumeur_accepte,
-  equipements,
-  description,
-  statut,
-  jardin,
-  parking,
-  wifi,
-  disponibilites,
-];
 
-if (publicLogementFields.some((field) => containsForbiddenContactInfo(field))) {
-  return res.status(400).json({
-    ok: false,
-    message:
-      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
-  });
-}
+    const publicLogementFields = [
+      titre,
+      type,
+      ville,
+      adresse,
+      surface,
+      chambres,
+      couchages,
+      prix,
+      animaux_acceptes,
+      fumeur_accepte,
+      equipements,
+      description,
+      statut,
+      jardin,
+      parking,
+      wifi,
+      disponibilites,
+    ];
 
-if (telephone && containsForbiddenContactInfo(telephone)) {
-  return res.status(400).json({
-    ok: false,
-    message:
-      "Le téléphone ne doit pas être publié dans une annonce. Le contact doit passer par la messagerie HAVENA.",
-  });
-}
+    if (
+      publicLogementFields.some((field) => containsForbiddenContactInfo(field))
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+      });
+    }
+
+    if (telephone && containsForbiddenContactInfo(telephone)) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Le téléphone ne doit pas être publié dans une annonce. Le contact doit passer par la messagerie HAVENA.",
+      });
+    }
 
     const normalizedHebergeurEmail = String(hebergeur_email || "")
       .trim()
       .toLowerCase();
-let image_url = "";
-if (req.file) {
-  const mimeToExt = {
-    "image/jpeg": "jpg",
-    "image/jpg": "jpg",
-    "image/png": "png",
-    "image/webp": "webp",
-    "image/gif": "gif",
-    "image/avif": "avif",
-    "image/svg+xml": "svg",
-  };
 
-  const safeExt =
-    mimeToExt[req.file.mimetype] ||
-    String(req.file.originalname || "").split(".").pop()?.toLowerCase() ||
-    "jpg";
+    let image_url = "";
 
-  const fileName = `logement_${Date.now()}.${safeExt}`;
+    if (req.file) {
+      const mimeToExt = {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+        "image/gif": "gif",
+        "image/avif": "avif",
+        "image/svg+xml": "svg",
+      };
 
-  const { data: uploadData, error: uploadError } = await supabase.storage
-    .from("logements")
-    .upload(fileName, req.file.buffer, {
-      contentType: req.file.mimetype,
-      upsert: false,
-    });
+      const safeExt =
+        mimeToExt[req.file.mimetype] ||
+        String(req.file.originalname || "").split(".").pop()?.toLowerCase() ||
+        "jpg";
 
-  if (uploadError) {
-    return res.status(500).json({
-      ok: false,
-      message: "Erreur upload image",
-      error: uploadError.message,
-    });
-  }
+      const fileName = `logement_${Date.now()}.${safeExt}`;
 
-  const uploadedPath = uploadData?.path || fileName;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from("logements")
+        .upload(fileName, req.file.buffer, {
+          contentType: req.file.mimetype,
+          upsert: false,
+        });
 
-  const { data: publicUrlData } = supabase.storage
-    .from("logements")
-    .getPublicUrl(uploadedPath);
+      if (uploadError) {
+        return res.status(500).json({
+          ok: false,
+          message: "Erreur upload image",
+          error: uploadError.message,
+        });
+      }
 
-  image_url = publicUrlData?.publicUrl || "";
-}
+      const uploadedPath = uploadData?.path || fileName;
+
+      const { data: publicUrlData } = supabase.storage
+        .from("logements")
+        .getPublicUrl(uploadedPath);
+
+      image_url = publicUrlData?.publicUrl || "";
+    }
 
     let stripeAccountId = "";
 
@@ -1455,11 +1522,11 @@ if (req.file) {
     });
   }
 });
+
 // ===============================
 // DISPONIBILITÉS LOGEMENTS HAVENA
 // ===============================
 
-// Récupérer les disponibilités d’un logement
 app.get("/api/logements/:id/disponibilites", async (req, res) => {
   try {
     const logementId = req.params.id;
@@ -1491,10 +1558,10 @@ app.get("/api/logements/:id/disponibilites", async (req, res) => {
   }
 });
 
-// Ajouter une période de disponibilité / indisponibilité
 app.post("/api/logements/:id/disponibilites", async (req, res) => {
   try {
     const logementId = req.params.id;
+
     const {
       hebergeur_email,
       date_debut,
@@ -1548,7 +1615,6 @@ app.post("/api/logements/:id/disponibilites", async (req, res) => {
   }
 });
 
-// Supprimer une période de disponibilité
 app.delete("/api/logements/disponibilites/:disponibiliteId", async (req, res) => {
   try {
     const disponibiliteId = req.params.disponibiliteId;
@@ -1635,66 +1701,67 @@ app.delete("/api/logements/:id", async (req, res) => {
 app.put("/api/logements/:id", async (req, res) => {
   try {
     const { id } = req.params;
-   const {
-  disponibilites,
-  titre,
-  type,
-  ville,
-  adresse,
-  surface,
-  chambres,
-  couchages,
-  prix,
-  animaux_acceptes,
-  fumeur_accepte,
-  equipements,
-  description,
-  statut,
-  jardin,
-  parking,
-  wifi,
-  telephone,
-} = req.body;
-const publicLogementUpdateFields = [
-  titre,
-  type,
-  ville,
-  adresse,
-  surface,
-  chambres,
-  couchages,
-  prix,
-  animaux_acceptes,
-  fumeur_accepte,
-  equipements,
-  description,
-  statut,
-  jardin,
-  parking,
-  wifi,
-  disponibilites,
-];
 
-if (
-  publicLogementUpdateFields.some((field) =>
-    containsForbiddenContactInfo(field)
-  )
-) {
-  return res.status(400).json({
-    ok: false,
-    message:
-      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
-  });
-}
+    const {
+      disponibilites,
+      titre,
+      type,
+      ville,
+      adresse,
+      surface,
+      chambres,
+      couchages,
+      prix,
+      animaux_acceptes,
+      fumeur_accepte,
+      equipements,
+      description,
+      statut,
+      jardin,
+      parking,
+      wifi,
+      telephone,
+    } = req.body;
 
-if (telephone && containsForbiddenContactInfo(telephone)) {
-  return res.status(400).json({
-    ok: false,
-    message:
-      "Le téléphone ne doit pas être publié dans une annonce. Le contact doit passer par la messagerie HAVENA.",
-  });
-}
+    const publicLogementUpdateFields = [
+      titre,
+      type,
+      ville,
+      adresse,
+      surface,
+      chambres,
+      couchages,
+      prix,
+      animaux_acceptes,
+      fumeur_accepte,
+      equipements,
+      description,
+      statut,
+      jardin,
+      parking,
+      wifi,
+      disponibilites,
+    ];
 
+    if (
+      publicLogementUpdateFields.some((field) =>
+        containsForbiddenContactInfo(field)
+      )
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+      });
+    }
+
+    if (telephone && containsForbiddenContactInfo(telephone)) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Le téléphone ne doit pas être publié dans une annonce. Le contact doit passer par la messagerie HAVENA.",
+      });
+    }
 
     const { data, error } = await supabase
       .from("logements")
@@ -1745,24 +1812,25 @@ app.post("/api/offres-emploi", async (req, res) => {
         message: "Champs obligatoires manquants",
       });
     }
-const publicOffreFields = [
-  titre,
-  ville,
-  contrat,
-  periode,
-  salaire,
-  profil,
-  description,
-  statut,
-];
 
-if (publicOffreFields.some((field) => containsForbiddenContactInfo(field))) {
-  return res.status(400).json({
-    ok: false,
-    message:
-      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
-  });
-}
+    const publicOffreFields = [
+      titre,
+      ville,
+      contrat,
+      periode,
+      salaire,
+      profil,
+      description,
+      statut,
+    ];
+
+    if (publicOffreFields.some((field) => containsForbiddenContactInfo(field))) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+      });
+    }
 
     const offre = {
       titre,
@@ -1773,7 +1841,9 @@ if (publicOffreFields.some((field) => containsForbiddenContactInfo(field))) {
       profil: profil || "",
       description: description || "",
       statut: statut || "Offre active",
-      employeur_email: employeur_email ? String(employeur_email).trim().toLowerCase() : "",
+      employeur_email: employeur_email
+        ? String(employeur_email).trim().toLowerCase()
+        : "",
     };
 
     const { data, error } = await supabase
@@ -1857,28 +1927,29 @@ app.put("/api/offres-emploi/:id", async (req, res) => {
         message: "Champs obligatoires manquants",
       });
     }
-const publicOffreUpdateFields = [
-  titre,
-  ville,
-  contrat,
-  periode,
-  salaire,
-  profil,
-  description,
-  statut,
-];
 
-if (
-  publicOffreUpdateFields.some((field) =>
-    containsForbiddenContactInfo(field)
-  )
-) {
-  return res.status(400).json({
-    ok: false,
-    message:
-      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
-  });
-}
+    const publicOffreUpdateFields = [
+      titre,
+      ville,
+      contrat,
+      periode,
+      salaire,
+      profil,
+      description,
+      statut,
+    ];
+
+    if (
+      publicOffreUpdateFields.some((field) =>
+        containsForbiddenContactInfo(field)
+      )
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+      });
+    }
 
     const { data, error } = await supabase
       .from("offres_emploi")
@@ -1953,10 +2024,10 @@ app.delete("/api/offres-emploi/:id", async (req, res) => {
   }
 });
 
-  // ===============================
-// CANDIDATURES EMPLOI HAVENA
-// Candidat répond -> employeur reçoit
 // ===============================
+// CANDIDATURES EMPLOI HAVENA
+// ===============================
+
 app.post("/api/candidatures-emploi", async (req, res) => {
   try {
     const {
@@ -1972,7 +2043,9 @@ app.post("/api/candidatures-emploi", async (req, res) => {
       cv_experience,
       message,
     } = req.body;
-let employeurEmail = "";
+
+    let employeurEmail = "";
+
     if (!offre_titre || !ville || !contrat) {
       return res.status(400).json({
         ok: false,
@@ -1993,8 +2066,6 @@ let employeurEmail = "";
           "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
       });
     }
-
-  
 
     if (offre_id) {
       const { data: offreData, error: offreError } = await supabase
@@ -2078,7 +2149,6 @@ let employeurEmail = "";
       });
     } catch (mailError) {
       console.error("Erreur email employeur candidature :", mailError);
-
       return res.status(500).json({
         ok: false,
         message:
@@ -2094,7 +2164,6 @@ let employeurEmail = "";
     });
   } catch (err) {
     console.error("Erreur serveur candidature emploi :", err);
-
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur candidature emploi",
@@ -2102,9 +2171,8 @@ let employeurEmail = "";
     });
   }
 });
-                                                                                                                
-app.post("/api/messages/check", async (req, res) => {
 
+app.post("/api/messages/check", async (req, res) => {
   try {
     const { message } = req.body;
 
@@ -2136,6 +2204,7 @@ app.post("/api/messages/check", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5055;
+
 // ===============================
 // SAISONNIERS HAVENA
 // ===============================
@@ -2144,7 +2213,27 @@ app.get("/api/saisonniers", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("havena_users")
-      .select("*")
+      .select(`
+        id,
+        first_name,
+        last_name,
+        role,
+        poste_recherche,
+        mois_disponible,
+        periode_disponible,
+        niveau_etudes,
+        diplomes,
+        formation,
+        experiences,
+        competences,
+        langues,
+        permis,
+        mobilite,
+        type_contrat_recherche,
+        secteur_recherche,
+        presentation,
+        created_at
+      `)
       .eq("role", "saisonnier")
       .order("created_at", { ascending: false });
 
@@ -2168,6 +2257,7 @@ app.get("/api/saisonniers", async (req, res) => {
     });
   }
 });
+
 // ===============================
 // CANDIDATS HAVENA
 // Saisonniers + étudiants
@@ -2177,28 +2267,27 @@ app.get("/api/candidats", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("havena_users")
- .select(`
-  id,
-  first_name,
-  last_name,
-  role,
-  poste_recherche,
-  mois_disponible,
-  periode_disponible,
-  niveau_etudes,
-  diplomes,
-  formation,
-  experiences,
-  competences,
-  langues,
-  permis,
-  mobilite,
-  type_contrat_recherche,
-  secteur_recherche,
-  presentation,
-  created_at
-`)
-
+      .select(`
+        id,
+        first_name,
+        last_name,
+        role,
+        poste_recherche,
+        mois_disponible,
+        periode_disponible,
+        niveau_etudes,
+        diplomes,
+        formation,
+        experiences,
+        competences,
+        langues,
+        permis,
+        mobilite,
+        type_contrat_recherche,
+        secteur_recherche,
+        presentation,
+        created_at
+      `)
       .in("role", ["saisonnier", "etudiant"])
       .order("created_at", { ascending: false });
 
@@ -2222,6 +2311,7 @@ app.get("/api/candidats", async (req, res) => {
     });
   }
 });
+
 // ===============================
 // MISE À JOUR PROFIL CANDIDAT HAVENA
 // Saisonnier / Étudiant
@@ -2255,34 +2345,35 @@ app.put("/api/candidats/profil", async (req, res) => {
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
-const publicCandidateProfileFields = [
-  poste_recherche,
-  mois_disponible,
-  periode_disponible,
-  niveau_etudes,
-  diplomes,
-  formation,
-  experiences,
-  competences,
-  langues,
-  permis,
-  mobilite,
-  type_contrat_recherche,
-  secteur_recherche,
-  presentation,
-];
 
-if (
-  publicCandidateProfileFields.some((field) =>
-    containsForbiddenContactInfo(field)
-  )
-) {
-  return res.status(400).json({
-    ok: false,
-    message:
-      "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
-  });
-}
+    const publicCandidateProfileFields = [
+      poste_recherche,
+      mois_disponible,
+      periode_disponible,
+      niveau_etudes,
+      diplomes,
+      formation,
+      experiences,
+      competences,
+      langues,
+      permis,
+      mobilite,
+      type_contrat_recherche,
+      secteur_recherche,
+      presentation,
+    ];
+
+    if (
+      publicCandidateProfileFields.some((field) =>
+        containsForbiddenContactInfo(field)
+      )
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+      });
+    }
 
     const updatePayload = {
       poste_recherche: poste_recherche || null,
@@ -2306,7 +2397,28 @@ if (
       .update(updatePayload)
       .eq("email", normalizedEmail)
       .in("role", ["saisonnier", "etudiant"])
-      .select()
+      .select(`
+        id,
+        first_name,
+        last_name,
+        email,
+        role,
+        poste_recherche,
+        mois_disponible,
+        periode_disponible,
+        niveau_etudes,
+        diplomes,
+        formation,
+        experiences,
+        competences,
+        langues,
+        permis,
+        mobilite,
+        type_contrat_recherche,
+        secteur_recherche,
+        presentation,
+        created_at
+      `)
       .single();
 
     if (error) {
