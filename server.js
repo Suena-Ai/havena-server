@@ -72,15 +72,18 @@ function containsForbiddenContactInfo(text = "") {
     "exterieur",
   ];
 
- const hasForbiddenWord = forbiddenWords.some((word) => {
-  const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const hasForbiddenWord = forbiddenWords.some((word) => {
+    const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  if (word === "tel") {
-    return new RegExp(`(^|\\s|[.,;:!?()\\-])${escapedWord}(\\s|$|[.,;:!?()\\-])`, "i").test(value);
-  }
+    if (word === "tel") {
+      return new RegExp(
+        `(^|\\s|[.,;:!?()\\-])${escapedWord}(\\s|$|[.,;:!?()\\-])`,
+        "i"
+      ).test(value);
+    }
 
-  return value.includes(word);
-});
+    return value.includes(word);
+  });
 
   return (
     phoneRegex.test(text) ||
@@ -89,6 +92,7 @@ function containsForbiddenContactInfo(text = "") {
     hasForbiddenWord
   );
 }
+
 function buildEmailConfirmToken(email) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const expiresAt = Date.now() + 1000 * 60 * 60 * 24;
@@ -206,6 +210,7 @@ app.post(
   express.raw({ type: "application/json" }),
   async (req, res) => {
     const signature = req.headers["stripe-signature"];
+
     let event;
 
     try {
@@ -222,23 +227,9 @@ app.post(
     try {
       if (event.type === "checkout.session.completed") {
         const session = event.data.object;
+
         const reservationId = session?.metadata?.reservationId;
         const logementId = session?.metadata?.logementId;
-        const unlockType = session?.metadata?.type;
-        const unlockId = session?.metadata?.unlockId;
-
-        if (unlockType === "message_unlock" && unlockId) {
-          await supabase
-            .from("message_unlocks")
-            .update({
-              payment_status: "paid",
-              unlocked_at: new Date().toISOString(),
-              stripe_session_id: session.id,
-            })
-            .eq("id", unlockId);
-
-          return res.json({ received: true });
-        }
 
         if (reservationId) {
           await supabase
@@ -303,7 +294,9 @@ app.post(
                   `Bonjour ${logement.hebergeur_nom || "Hébergeur"},\n\n` +
                   `Une réservation a été confirmée pour votre logement.\n` +
                   `Logement : ${logement.titre || ""}\n` +
-                  `Client : ${reservation?.prenom || ""} ${reservation?.nom || ""}\n` +
+                  `Client : ${reservation?.prenom || ""} ${
+                    reservation?.nom || ""
+                  }\n` +
                   `Email client : ${reservation?.email || ""}\n` +
                   `Dates : ${reservation?.dates || ""}\n` +
                   `Acompte payé : ${reservation?.acompte || ""}\n\n` +
@@ -344,7 +337,6 @@ app.get("/", (req, res) => {
 
 /* =========================
    AUTH HAVENA
-   1 EMAIL = 1 SEUL ROLE
 ========================= */
 
 app.post("/api/auth/register", async (req, res) => {
@@ -418,30 +410,31 @@ app.post("/api/auth/register", async (req, res) => {
           "Cette adresse email est déjà utilisée pour ce profil. Veuillez vous connecter.",
       });
     }
-const requiredCandidateFields = [
-  poste_recherche,
-  mois_disponible,
-  periode_disponible,
-  niveau_etudes,
-  experiences,
-  competences,
-  langues,
-  mobilite,
-  type_contrat_recherche,
-  secteur_recherche,
-  presentation,
-];
 
-if (
-  (normalizedRole === "saisonnier" || normalizedRole === "etudiant") &&
-  requiredCandidateFields.some((field) => !String(field || "").trim())
-) {
-  return res.status(400).json({
-    ok: false,
-    message:
-      "Pour créer un compte candidat HAVENA, veuillez compléter les informations essentielles de votre profil : poste recherché, disponibilité, expérience, compétences, langues, mobilité, type de contrat, secteur recherché et présentation.",
-  });
-}
+    const requiredCandidateFields = [
+      poste_recherche,
+      mois_disponible,
+      periode_disponible,
+      niveau_etudes,
+      experiences,
+      competences,
+      langues,
+      mobilite,
+      type_contrat_recherche,
+      secteur_recherche,
+      presentation,
+    ];
+
+    if (
+      (normalizedRole === "saisonnier" || normalizedRole === "etudiant") &&
+      requiredCandidateFields.some((field) => !String(field || "").trim())
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Pour créer un compte candidat HAVENA, veuillez compléter les informations essentielles de votre profil : poste recherché, disponibilité, expérience, compétences, langues, mobilité, type de contrat, secteur recherché et présentation.",
+      });
+    }
 
     const publicRegisterCandidateFields = [
       poste_recherche,
@@ -506,7 +499,8 @@ if (
     const { data, error } = await supabase
       .from("havena_users")
       .insert([newUser])
-      .select(`
+      .select(
+        `
         id,
         first_name,
         last_name,
@@ -515,7 +509,8 @@ if (
         email_confirmed,
         stripe_account_id,
         created_at
-      `)
+      `
+      )
       .single();
 
     if (error) {
@@ -525,29 +520,30 @@ if (
         error: error.message,
       });
     }
-const confirmToken = buildEmailConfirmToken(normalizedEmail);
 
-const confirmLink = `${FRONTEND_URL}/confirm-email?token=${encodeURIComponent(
-  confirmToken
-)}&email=${encodeURIComponent(normalizedEmail)}`;
+    const confirmToken = buildEmailConfirmToken(normalizedEmail);
 
-try {
-  await transporter.sendMail({
-    from: process.env.MAIL_USER,
-    to: normalizedEmail,
-    subject: "Confirmez votre adresse email - HAVENA",
-    text:
-      `Bonjour ${String(firstName).trim()},\n\n` +
-      `Votre compte HAVENA a bien été créé.\n\n` +
-      `Pour activer votre compte, cliquez sur ce lien :\n` +
-      `${confirmLink}\n\n` +
-      `Ce lien est valable 24 heures.\n\n` +
-      `Si vous n’êtes pas à l’origine de cette inscription, ignorez cet email.\n\n` +
-      `HAVENA`,
-  });
-} catch (mailError) {
-  console.error("Erreur envoi email confirmation :", mailError);
-}
+    const confirmLink = `${FRONTEND_URL}/confirm-email?token=${encodeURIComponent(
+      confirmToken
+    )}&email=${encodeURIComponent(normalizedEmail)}`;
+
+    try {
+      await transporter.sendMail({
+        from: process.env.MAIL_USER,
+        to: normalizedEmail,
+        subject: "Confirmez votre adresse email - HAVENA",
+        text:
+          `Bonjour ${String(firstName).trim()},\n\n` +
+          `Votre compte HAVENA a bien été créé.\n\n` +
+          `Pour activer votre compte, cliquez sur ce lien :\n` +
+          `${confirmLink}\n\n` +
+          `Ce lien est valable 24 heures.\n\n` +
+          `Si vous n’êtes pas à l’origine de cette inscription, ignorez cet email.\n\n` +
+          `HAVENA`,
+      });
+    } catch (mailError) {
+      console.error("Erreur envoi email confirmation :", mailError);
+    }
 
     return res.status(201).json({
       ok: true,
@@ -556,6 +552,7 @@ try {
     });
   } catch (err) {
     console.error("Erreur serveur register :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
@@ -579,7 +576,8 @@ app.post("/api/auth/login", async (req, res) => {
 
     const { data: user, error } = await supabase
       .from("havena_users")
-      .select(`
+      .select(
+        `
         id,
         email,
         password,
@@ -588,7 +586,8 @@ app.post("/api/auth/login", async (req, res) => {
         last_name,
         email_confirmed,
         stripe_account_id
-      `)
+      `
+      )
       .eq("email", normalizedEmail)
       .maybeSingle();
 
@@ -613,20 +612,15 @@ app.post("/api/auth/login", async (req, res) => {
         message: `Cette adresse email est déjà liée au profil "${user.role}".`,
       });
     }
-if (!user.email_confirmed) {
-  return res.status(403).json({
-    ok: false,
-    message:
-      "Veuillez confirmer votre adresse email avant de vous connecter. Un lien de confirmation vous a été envoyé par email.",
-  });
-}
-if (!user.email_confirmed) {
-  return res.status(403).json({
-    ok: false,
-    message:
-      "Veuillez confirmer votre adresse email avant de vous connecter. Un lien de confirmation vous a été envoyé par email.",
-  });
-}
+
+    if (!user.email_confirmed) {
+      return res.status(403).json({
+        ok: false,
+        message:
+          "Veuillez confirmer votre adresse email avant de vous connecter. Un lien de confirmation vous a été envoyé par email.",
+      });
+    }
+
     const storedPassword = String(user.password || "");
     const incomingPassword = String(password || "");
 
@@ -669,16 +663,17 @@ if (!user.email_confirmed) {
     });
   } catch (err) {
     console.error("Erreur serveur login :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
     });
   }
 });
+
 app.get("/api/auth/confirm-email", async (req, res) => {
   try {
     const { token, email } = req.query;
-
     const normalizedEmail = String(email || "").trim().toLowerCase();
 
     if (!token || !normalizedEmail) {
@@ -721,6 +716,7 @@ app.get("/api/auth/confirm-email", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur serveur confirmation email :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur confirmation email.",
@@ -787,6 +783,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur serveur forgot-password :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
@@ -797,7 +794,6 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 app.post("/api/auth/reset-password", async (req, res) => {
   try {
     const { email, token, newPassword } = req.body;
-
     const normalizedEmail = String(email || "").trim().toLowerCase();
     const normalizedPassword = String(newPassword || "").trim();
 
@@ -861,6 +857,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur serveur reset-password :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
@@ -954,6 +951,7 @@ app.post("/api/stripe/connect/start", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur Stripe Connect start :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur démarrage Stripe Connect",
@@ -1048,6 +1046,7 @@ app.get("/api/stripe/connect/status", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur Stripe Connect status :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur statut Stripe Connect",
@@ -1059,14 +1058,7 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
   try {
     const { montant, prenom, nom, email, reservationId, logementId } = req.body;
 
-    if (
-      !montant ||
-      !prenom ||
-      !nom ||
-      !email ||
-      !reservationId ||
-      !logementId
-    ) {
+    if (!montant || !prenom || !nom || !email || !reservationId || !logementId) {
       return res.status(400).json({
         ok: false,
         message: "Données Stripe manquantes",
@@ -1146,6 +1138,7 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur création checkout Stripe :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur Stripe",
@@ -1153,131 +1146,9 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
   }
 });
 
-// ===============================
-// STRIPE - DÉBLOCAGE MESSAGERIE CANDIDAT 3€
-// ===============================
-
-app.post("/api/stripe/create-message-unlock-session", async (req, res) => {
-  try {
-    const { employerEmail, candidateId } = req.body;
-
-    if (!employerEmail || !candidateId) {
-      return res.status(400).json({
-        ok: false,
-        message: "Données manquantes pour débloquer la messagerie",
-      });
-    }
-
-    const normalizedEmployerEmail = String(employerEmail).trim().toLowerCase();
-    const normalizedCandidateId = Number(candidateId);
-
-    if (!normalizedEmployerEmail || !normalizedCandidateId) {
-      return res.status(400).json({
-        ok: false,
-        message: "Email employeur ou candidat invalide",
-      });
-    }
-
-    const { data: existingUnlock, error: existingError } = await supabase
-      .from("message_unlocks")
-      .select("*")
-      .eq("employer_email", normalizedEmployerEmail)
-      .eq("candidate_id", normalizedCandidateId)
-      .eq("payment_status", "paid")
-      .maybeSingle();
-
-    if (existingError) {
-      return res.status(500).json({
-        ok: false,
-        message: "Erreur vérification déblocage",
-        error: existingError.message,
-      });
-    }
-
-    if (existingUnlock) {
-      return res.json({
-        ok: true,
-        alreadyUnlocked: true,
-        message: "Messagerie déjà débloquée pour ce candidat",
-      });
-    }
-
-    const { data: pendingUnlock, error: insertError } = await supabase
-      .from("message_unlocks")
-      .insert([
-        {
-          employer_email: normalizedEmployerEmail,
-          candidate_id: normalizedCandidateId,
-          amount_cents: 300,
-          payment_status: "pending",
-        },
-      ])
-      .select()
-      .single();
-
-    if (insertError) {
-      return res.status(500).json({
-        ok: false,
-        message: "Erreur création déblocage messagerie",
-        error: insertError.message,
-      });
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      mode: "payment",
-      customer_email: normalizedEmployerEmail,
-      metadata: {
-        type: "message_unlock",
-        unlockId: String(pendingUnlock.id),
-        employerEmail: normalizedEmployerEmail,
-        candidateId: String(normalizedCandidateId),
-      },
-      line_items: [
-        {
-          price_data: {
-            currency: "eur",
-            product_data: {
-              name: "Déblocage messagerie candidat HAVENA",
-              description: "Ouverture de la messagerie interne avec un candidat",
-            },
-            unit_amount: 300,
-          },
-          quantity: 1,
-        },
-      ],
-      success_url: `${
-        process.env.STRIPE_SUCCESS_URL || FRONTEND_URL
-      }/candidats/${normalizedCandidateId}?message_unlocked=success`,
-      cancel_url: `${
-        process.env.STRIPE_CANCEL_URL || FRONTEND_URL
-      }/candidats/${normalizedCandidateId}?message_unlocked=cancel`,
-    });
-
-    await supabase
-      .from("message_unlocks")
-      .update({
-        stripe_session_id: session.id,
-      })
-      .eq("id", pendingUnlock.id);
-
-    return res.json({
-      ok: true,
-      url: session.url,
-    });
-  } catch (err) {
-    console.error("Erreur création session déblocage messagerie :", err);
-    return res.status(500).json({
-      ok: false,
-      message: "Erreur Stripe déblocage messagerie",
-      error: err.message,
-    });
-  }
-});
-
-// ===============================
-// VÉRIFIER SI LA MESSAGERIE EST DÉBLOQUÉE
-// ===============================
+/* ===============================
+   MESSAGERIE HAVENA SANS PAIEMENT 3 €
+=============================== */
 
 app.get("/api/message-unlocks/check", async (req, res) => {
   try {
@@ -1294,29 +1165,53 @@ app.get("/api/message-unlocks/check", async (req, res) => {
     const normalizedEmployerEmail = String(employerEmail).trim().toLowerCase();
     const normalizedCandidateId = Number(candidateId);
 
-    const { data, error } = await supabase
-      .from("message_unlocks")
-      .select("*")
-      .eq("employer_email", normalizedEmployerEmail)
-      .eq("candidate_id", normalizedCandidateId)
-      .eq("payment_status", "paid")
+    if (!normalizedEmployerEmail || !normalizedCandidateId) {
+      return res.status(400).json({
+        ok: false,
+        unlocked: false,
+        message: "Email employeur ou candidat invalide",
+      });
+    }
+
+    const { data: employer, error: employerError } = await supabase
+      .from("havena_users")
+      .select("id, email, role, email_confirmed")
+      .eq("email", normalizedEmployerEmail)
       .maybeSingle();
 
-    if (error) {
+    if (employerError) {
       return res.status(500).json({
         ok: false,
         unlocked: false,
-        message: "Erreur vérification messagerie",
-        error: error.message,
+        message: "Erreur vérification employeur",
+        error: employerError.message,
+      });
+    }
+
+    if (!employer || employer.role !== "employeur") {
+      return res.status(403).json({
+        ok: false,
+        unlocked: false,
+        message: "Accès réservé aux employeurs HAVENA.",
+      });
+    }
+
+    if (!employer.email_confirmed) {
+      return res.status(403).json({
+        ok: false,
+        unlocked: false,
+        message: "Adresse email employeur non confirmée.",
       });
     }
 
     return res.json({
       ok: true,
-      unlocked: !!data,
+      unlocked: true,
+      message: "Messagerie HAVENA autorisée.",
     });
   } catch (err) {
-    console.error("Erreur vérification déblocage messagerie :", err);
+    console.error("Erreur vérification messagerie :", err);
+
     return res.status(500).json({
       ok: false,
       unlocked: false,
@@ -1325,6 +1220,10 @@ app.get("/api/message-unlocks/check", async (req, res) => {
     });
   }
 });
+
+/* ===============================
+   RÉSERVATIONS
+=============================== */
 
 app.post("/api/reservations", async (req, res) => {
   try {
@@ -1377,14 +1276,13 @@ app.post("/api/reservations", async (req, res) => {
 
     if (error) {
       console.error("Erreur Supabase réservation :", error);
+
       return res.status(500).json({
         ok: false,
         message: "Erreur lors de l’enregistrement Supabase",
         error: error.message,
       });
     }
-
-    console.log("Nouvelle réservation HAVENA :", data);
 
     return res.status(201).json({
       ok: true,
@@ -1393,6 +1291,7 @@ app.post("/api/reservations", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur serveur réservation :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
@@ -1409,6 +1308,7 @@ app.get("/api/reservations", async (req, res) => {
 
     if (error) {
       console.error("Erreur lecture Supabase réservations :", error);
+
       return res.status(500).json({
         ok: false,
         message: "Erreur lors de la lecture des réservations",
@@ -1423,6 +1323,7 @@ app.get("/api/reservations", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur serveur lecture réservations :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
@@ -1508,12 +1409,17 @@ app.post("/api/reservations/:id/send-confirmations", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur envoi confirmation :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur envoi email",
     });
   }
 });
+
+/* ===============================
+   LOGEMENTS
+=============================== */
 
 app.post("/api/logements", upload.single("image"), async (req, res) => {
   try {
@@ -1567,9 +1473,7 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
       disponibilites,
     ];
 
-    if (
-      publicLogementFields.some((field) => containsForbiddenContactInfo(field))
-    ) {
+    if (publicLogementFields.some((field) => containsForbiddenContactInfo(field))) {
       return res.status(400).json({
         ok: false,
         message:
@@ -1690,16 +1594,13 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur serveur création logement :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
     });
   }
 });
-
-// ===============================
-// DISPONIBILITÉS LOGEMENTS HAVENA
-// ===============================
 
 app.get("/api/logements/:id/disponibilites", async (req, res) => {
   try {
@@ -1966,6 +1867,10 @@ app.put("/api/logements/:id", async (req, res) => {
   }
 });
 
+/* ===============================
+   OFFRES EMPLOI HAVENA
+=============================== */
+
 app.post("/api/offres-emploi", async (req, res) => {
   try {
     const {
@@ -2114,9 +2019,7 @@ app.put("/api/offres-emploi/:id", async (req, res) => {
     ];
 
     if (
-      publicOffreUpdateFields.some((field) =>
-        containsForbiddenContactInfo(field)
-      )
+      publicOffreUpdateFields.some((field) => containsForbiddenContactInfo(field))
     ) {
       return res.status(400).json({
         ok: false,
@@ -2155,6 +2058,7 @@ app.put("/api/offres-emploi/:id", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur serveur modification offre :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
@@ -2198,9 +2102,9 @@ app.delete("/api/offres-emploi/:id", async (req, res) => {
   }
 });
 
-// ===============================
-// CANDIDATURES EMPLOI HAVENA
-// ===============================
+/* ===============================
+   CANDIDATURES EMPLOI HAVENA
+=============================== */
 
 app.post("/api/candidatures-emploi", async (req, res) => {
   try {
@@ -2230,9 +2134,7 @@ app.post("/api/candidatures-emploi", async (req, res) => {
     const publicCandidatureFields = [cv_experience, message];
 
     if (
-      publicCandidatureFields.some((field) =>
-        containsForbiddenContactInfo(field)
-      )
+      publicCandidatureFields.some((field) => containsForbiddenContactInfo(field))
     ) {
       return res.status(400).json({
         ok: false,
@@ -2257,9 +2159,7 @@ app.post("/api/candidatures-emploi", async (req, res) => {
       }
 
       if (offreData?.employeur_email) {
-        employeurEmail = String(offreData.employeur_email)
-          .trim()
-          .toLowerCase();
+        employeurEmail = String(offreData.employeur_email).trim().toLowerCase();
       }
     }
 
@@ -2323,6 +2223,7 @@ app.post("/api/candidatures-emploi", async (req, res) => {
       });
     } catch (mailError) {
       console.error("Erreur email employeur candidature :", mailError);
+
       return res.status(500).json({
         ok: false,
         message:
@@ -2338,6 +2239,7 @@ app.post("/api/candidatures-emploi", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur serveur candidature emploi :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur candidature emploi",
@@ -2377,17 +2279,16 @@ app.post("/api/messages/check", async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 5055;
-
-// ===============================
-// SAISONNIERS HAVENA
-// ===============================
+/* ===============================
+   SAISONNIERS / CANDIDATS
+=============================== */
 
 app.get("/api/saisonniers", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("havena_users")
-      .select(`
+      .select(
+        `
         id,
         first_name,
         last_name,
@@ -2407,7 +2308,8 @@ app.get("/api/saisonniers", async (req, res) => {
         secteur_recherche,
         presentation,
         created_at
-      `)
+      `
+      )
       .eq("role", "saisonnier")
       .order("created_at", { ascending: false });
 
@@ -2432,16 +2334,12 @@ app.get("/api/saisonniers", async (req, res) => {
   }
 });
 
-// ===============================
-// CANDIDATS HAVENA
-// Saisonniers + étudiants
-// ===============================
-
 app.get("/api/candidats", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("havena_users")
-      .select(`
+      .select(
+        `
         id,
         first_name,
         last_name,
@@ -2461,7 +2359,8 @@ app.get("/api/candidats", async (req, res) => {
         secteur_recherche,
         presentation,
         created_at
-      `)
+      `
+      )
       .in("role", ["saisonnier", "etudiant"])
       .order("created_at", { ascending: false });
 
@@ -2485,11 +2384,6 @@ app.get("/api/candidats", async (req, res) => {
     });
   }
 });
-
-// ===============================
-// MISE À JOUR PROFIL CANDIDAT HAVENA
-// Saisonnier / Étudiant
-// ===============================
 
 app.put("/api/candidats/profil", async (req, res) => {
   try {
@@ -2571,7 +2465,8 @@ app.put("/api/candidats/profil", async (req, res) => {
       .update(updatePayload)
       .eq("email", normalizedEmail)
       .in("role", ["saisonnier", "etudiant"])
-      .select(`
+      .select(
+        `
         id,
         first_name,
         last_name,
@@ -2592,7 +2487,8 @@ app.put("/api/candidats/profil", async (req, res) => {
         secteur_recherche,
         presentation,
         created_at
-      `)
+      `
+      )
       .single();
 
     if (error) {
@@ -2610,6 +2506,7 @@ app.put("/api/candidats/profil", async (req, res) => {
     });
   } catch (err) {
     console.error("Erreur serveur mise à jour profil candidat :", err);
+
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur mise à jour profil candidat",
@@ -2617,6 +2514,307 @@ app.put("/api/candidats/profil", async (req, res) => {
     });
   }
 });
+
+/* ===============================
+   BANDEROLES PUBLICITAIRES HAVENA
+=============================== */
+
+app.get("/api/partner-ads/active", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("partner_ads")
+      .select(
+        "id, role, business_name, city, title, description, promotion, logo_url, image_urls, music_key, link_url, views_count, clicks_count, is_active, created_at"
+      )
+      .eq("is_active", true)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (error) {
+      console.error("Erreur récupération publicités actives :", error);
+
+      return res.status(500).json({
+        ok: false,
+        message: "Impossible de récupérer les publicités actives.",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      ads: data || [],
+    });
+  } catch (error) {
+    console.error("Erreur serveur /api/partner-ads/active :", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur pendant le chargement des publicités.",
+    });
+  }
+});
+
+app.post("/api/partner-ads/:id/view", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        ok: false,
+        message: "ID publicité manquant.",
+      });
+    }
+
+    const { data: ad, error: readError } = await supabase
+      .from("partner_ads")
+      .select("id, views_count, is_active")
+      .eq("id", id)
+      .eq("is_active", true)
+      .single();
+
+    if (readError || !ad) {
+      return res.status(404).json({
+        ok: false,
+        message: "Publicité active introuvable.",
+      });
+    }
+
+    const { error: updateError } = await supabase
+      .from("partner_ads")
+      .update({
+        views_count: Number(ad.views_count || 0) + 1,
+      })
+      .eq("id", id);
+
+    if (updateError) {
+      console.error("Erreur compteur vue publicité :", updateError);
+
+      return res.status(500).json({
+        ok: false,
+        message: "Impossible de compter la vue.",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Vue enregistrée.",
+    });
+  } catch (error) {
+    console.error("Erreur serveur /api/partner-ads/:id/view :", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur pendant le comptage de vue.",
+    });
+  }
+});
+
+app.post("/api/partner-ads/:id/click", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        ok: false,
+        message: "ID publicité manquant.",
+      });
+    }
+
+    const { data: ad, error: readError } = await supabase
+      .from("partner_ads")
+      .select("id, clicks_count, is_active")
+      .eq("id", id)
+      .eq("is_active", true)
+      .single();
+
+    if (readError || !ad) {
+      return res.status(404).json({
+        ok: false,
+        message: "Publicité active introuvable.",
+      });
+    }
+
+    const { error: updateError } = await supabase
+      .from("partner_ads")
+      .update({
+        clicks_count: Number(ad.clicks_count || 0) + 1,
+      })
+      .eq("id", id);
+
+    if (updateError) {
+      console.error("Erreur compteur clic publicité :", updateError);
+
+      return res.status(500).json({
+        ok: false,
+        message: "Impossible de compter le clic.",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Clic enregistré.",
+    });
+  } catch (error) {
+    console.error("Erreur serveur /api/partner-ads/:id/click :", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur pendant le comptage du clic.",
+    });
+  }
+});
+
+/* ===============================
+   FRANCE TRAVAIL - OFFRES PAR PAYS
+=============================== */
+
+const FRANCE_TRAVAIL_TOKEN_URL =
+  "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=%2Fpartenaire";
+
+const FRANCE_TRAVAIL_OFFRES_URL =
+  "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search";
+
+let franceTravailTokenCache = {
+  token: null,
+  expiresAt: 0,
+};
+
+async function getFranceTravailToken() {
+  const now = Date.now();
+
+  if (
+    franceTravailTokenCache.token &&
+    franceTravailTokenCache.expiresAt > now + 60000
+  ) {
+    return franceTravailTokenCache.token;
+  }
+
+  const clientId = process.env.FRANCE_TRAVAIL_CLIENT_ID;
+  const clientSecret = process.env.FRANCE_TRAVAIL_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error("Variables France Travail manquantes.");
+  }
+
+  const body = new URLSearchParams();
+  body.append("grant_type", "client_credentials");
+  body.append("client_id", clientId);
+  body.append("client_secret", clientSecret);
+  body.append(
+    "scope",
+    process.env.FRANCE_TRAVAIL_SCOPE || "api_offresdemploiv2 o2dsoffre"
+  );
+
+  const response = await fetch(FRANCE_TRAVAIL_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.access_token) {
+    console.error("Erreur token France Travail :", data);
+    throw new Error("Impossible d'obtenir le token France Travail.");
+  }
+
+  franceTravailTokenCache = {
+    token: data.access_token,
+    expiresAt: now + (data.expires_in || 1500) * 1000,
+  };
+
+  return data.access_token;
+}
+
+app.get("/api/offres-emploi/pays/:pays", async (req, res) => {
+  try {
+    const pays = String(req.params.pays || "").trim().toLowerCase();
+
+    if (!pays) {
+      return res.status(400).json({
+        ok: false,
+        message: "Pays manquant.",
+      });
+    }
+
+    if (pays !== "france") {
+      return res.json({
+        ok: true,
+        source: "havena",
+        pays,
+        offres: [],
+        message:
+          "Ce pays est prêt côté HAVENA, mais son API emploi officielle n’est pas encore branchée.",
+      });
+    }
+
+    const token = await getFranceTravailToken();
+
+    const response = await fetch(`${FRANCE_TRAVAIL_OFFRES_URL}?range=0-19`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erreur API France Travail :", data);
+
+      return res.status(response.status).json({
+        ok: false,
+        error: "Erreur API France Travail.",
+        details: data,
+      });
+    }
+
+    const offres = (data.resultats || []).map((offre) => ({
+      id: offre.id,
+      titre: offre.intitule || "Offre d’emploi",
+      entreprise:
+        offre.entreprise?.nom ||
+        offre.entreprise?.nomEntreprise ||
+        "Entreprise à confirmer",
+      ville:
+        offre.lieuTravail?.libelle ||
+        offre.lieuTravail?.commune ||
+        "France",
+      pays: "France",
+      contrat: offre.typeContrat || offre.natureContrat || "Contrat à confirmer",
+      salaire:
+        offre.salaire?.libelle ||
+        offre.salaire?.commentaire ||
+        "Salaire à confirmer",
+      description:
+        offre.description ||
+        "Description de l’offre à consulter auprès de France Travail.",
+      url:
+        offre.origineOffre?.urlOrigine ||
+        `https://candidat.francetravail.fr/offres/recherche/detail/${offre.id}`,
+      source: "France Travail",
+    }));
+
+    return res.json({
+      ok: true,
+      source: "France Travail",
+      pays: "france",
+      offres,
+    });
+  } catch (error) {
+    console.error("Erreur route /api/offres-emploi/pays/:pays :", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Erreur serveur pendant le chargement des offres par pays.",
+      details: error.message,
+    });
+  }
+});
+
+const PORT = process.env.PORT || 5055;
 
 app.listen(PORT, () => {
   console.log(`HAVENA server lancé sur le port ${PORT}`);
