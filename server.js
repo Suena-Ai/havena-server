@@ -2688,8 +2688,8 @@ async function getFranceTravailToken() {
     return franceTravailTokenCache.token;
   }
 
-  const clientId = process.env.FRANCE_TRAVAIL_CLIENT_ID;
-  const clientSecret = process.env.FRANCE_TRAVAIL_CLIENT_SECRET;
+  const clientId = String(process.env.FRANCE_TRAVAIL_CLIENT_ID || "").trim();
+const clientSecret = String(process.env.FRANCE_TRAVAIL_CLIENT_SECRET || "").trim();
 
   if (!clientId || !clientSecret) {
     throw new Error("Variables France Travail manquantes.");
@@ -2699,10 +2699,11 @@ async function getFranceTravailToken() {
   body.append("grant_type", "client_credentials");
   body.append("client_id", clientId);
   body.append("client_secret", clientSecret);
-  body.append(
-    "scope",
-    process.env.FRANCE_TRAVAIL_SCOPE || "api_offresdemploiv2 o2dsoffre"
-  );
+  const scope = String(
+  process.env.FRANCE_TRAVAIL_SCOPE || "api_offresdemploiv2 o2dsoffre"
+).trim();
+
+body.append("scope", scope);
 
   const response = await fetch(FRANCE_TRAVAIL_TOKEN_URL, {
     method: "POST",
