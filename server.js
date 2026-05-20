@@ -2812,65 +2812,55 @@ app.put("/api/candidats/profil", async (req, res) => {
 
 app.get("/api/partner-ads/active", async (req, res) => {
   try {
-    const nowIso = new Date().toISOString();
-
-    const { data: activeSubscriptions, error: subscriptionError } = await supabase
-      .from("professional_subscriptions")
-      .select("email")
-      .in("status", ["active", "trialing"])
-      .gte("current_period_end", nowIso);
-
-    if (subscriptionError) {
-      return res.status(500).json({
-        ok: false,
-        message: "Erreur lecture abonnements actifs.",
-        error: subscriptionError.message,
-      });
-    }
-
-    const activeEmails = (activeSubscriptions || [])
-      .map((item) => normalizeEmail(item.email))
-      .filter(Boolean);
-
-    if (activeEmails.length === 0) {
-      return res.json({
-        ok: true,
-        ads: [],
-      });
-    }
-
-    const { data, error } = await supabase
+    const { data: ads, error } = await supabase
       .from("partner_ads")
-      .select(
-        "id, owner_email, owner_role, business_name, city, title, description, promotion, logo_url, image_urls, music_key, link_url, views_count, clicks_count, is_active, created_at"
-      )
+      .select(`
+        id,
+        user_id,
+        role,
+        business_name,
+        city,
+        title,
+        description,
+        promotion,
+        logo_url,
+        image_urls,
+        music_key,
+        link_url,
+        is_active,
+        views_count,
+        clicks_count,
+        owner_email,
+        owner_role,
+        created_at,
+        updated_at
+      `)
       .eq("is_active", true)
-      .in("owner_email", activeEmails)
-      .order("created_at", { ascending: false })
-      .limit(20);
+      .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("Erreur récupération publicités actives :", error);
-
+      console.error("Erreur lecture publicités actives :", error);
       return res.status(500).json({
         ok: false,
-        message: "Impossible de récupérer les publicités actives.",
+        message: "Erreur lecture publicités actives.",
+        error: error.message,
       });
     }
 
     return res.json({
       ok: true,
-      ads: data || [],
+      ads: ads || [],
     });
-  } catch (error) {
-    console.error("Erreur serveur /api/partner-ads/active :", error);
-
+  } catch (err) {
+    console.error("Erreur serveur publicités actives :", err);
     return res.status(500).json({
       ok: false,
-      message: "Erreur serveur pendant le chargement des publicités.",
+      message: "Erreur serveur publicités actives.",
+      error: err.message,
     });
   }
 });
+
 
 app.get("/api/partner-ads/me", async (req, res) => {
   try {
