@@ -2977,7 +2977,7 @@ const isAdminOwner = ownerEmail === "fasterame@gmail.com";
       image_urls: safeImageUrls,
       music_key: music_key || "",
       link_url: link_url || "",
-      is_active: !!is_active && (subscriptionActive || isAdminOwner),
+      is_active: isAdminOwner ? true : !!is_active && subscriptionActive,
       updated_at: new Date().toISOString(),
     };
 
