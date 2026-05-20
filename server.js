@@ -2864,7 +2864,9 @@ app.get("/api/partner-ads/active", async (req, res) => {
 
 app.get("/api/partner-ads/me", async (req, res) => {
   try {
-    const ownerEmail = normalizeEmail(req.query.email);
+const ownerEmail = normalizeEmail(req.query.email);
+const isAdminOwner = ownerEmail === "fasterame@gmail.com";
+
 
     if (!ownerEmail) {
       return res.status(400).json({
@@ -2873,7 +2875,10 @@ app.get("/api/partner-ads/me", async (req, res) => {
       });
     }
 
-    const active = await isProfessionalSubscriptionActive(ownerEmail);
+  const active = isAdminOwner
+  ? true
+  : await isProfessionalSubscriptionActive(ownerEmail);
+
 
     const { data, error } = await supabase
       .from("partner_ads")
@@ -2922,7 +2927,9 @@ app.post("/api/partner-ads/upsert", async (req, res) => {
     } = req.body;
 
     const ownerEmail = normalizeEmail(owner_email);
-    const ownerRole = String(owner_role || "").trim().toLowerCase();
+const ownerRole = String(owner_role || "").trim().toLowerCase();
+const isAdminOwner = ownerEmail === "fasterame@gmail.com";
+
 
     if (!ownerEmail) {
       return res.status(400).json({
@@ -2933,13 +2940,13 @@ app.post("/api/partner-ads/upsert", async (req, res) => {
 
     const subscriptionActive = await isProfessionalSubscriptionActive(ownerEmail);
 
-    if (!subscriptionActive) {
-      return res.status(403).json({
-        ok: false,
-        message:
-          "Abonnement professionnel HAVENA requis pour créer ou afficher une banderole publicitaire.",
-      });
-    }
+   if (!subscriptionActive && !isAdminOwner) {
+  return res.status(403).json({
+    ok: false,
+    message:
+      "Abonnement professionnel HAVENA requis pour créer ou afficher une banderole.",
+  });
+}
 
     const publicAdFields = [
       business_name,
@@ -2972,7 +2979,7 @@ app.post("/api/partner-ads/upsert", async (req, res) => {
       image_urls: safeImageUrls,
       music_key: music_key || "",
       link_url: link_url || "",
-      is_active: !!is_active,
+      is_active: !!is_active && (subscriptionActive || isAdminOwner),
       updated_at: new Date().toISOString(),
     };
 
