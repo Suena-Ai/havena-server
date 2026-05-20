@@ -2812,58 +2812,6 @@ app.put("/api/candidats/profil", async (req, res) => {
 
 app.get("/api/partner-ads/active", async (req, res) => {
   try {
-    const { data: ads, error } = await supabase
-      .from("partner_ads")
-      .select(`
-        id,
-        user_id,
-        role,
-        business_name,
-        city,
-        title,
-        description,
-        promotion,
-        logo_url,
-        image_urls,
-        music_key,
-        link_url,
-        is_active,
-        views_count,
-        clicks_count,
-        owner_email,
-        owner_role,
-        created_at,
-        updated_at
-      `)
-      .eq("is_active", true)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Erreur lecture publicités actives :", error);
-      return res.status(500).json({
-        ok: false,
-        message: "Erreur lecture publicités actives.",
-        error: error.message,
-      });
-    }
-
-    return res.json({
-      ok: true,
-      ads: ads || [],
-    });
-  } catch (err) {
-    console.error("Erreur serveur publicités actives :", err);
-    return res.status(500).json({
-      ok: false,
-      message: "Erreur serveur publicités actives.",
-      error: err.message,
-    });
-  }
-});
-
-
-app.get("/api/partner-ads/active", async (req, res) => {
-  try {
     const { data, error } = await supabase
       .from("partner_ads")
       .select("*")
@@ -2872,7 +2820,12 @@ app.get("/api/partner-ads/active", async (req, res) => {
       .limit(20);
 
     if (error) {
-      throw error;
+      console.error("Erreur lecture publicités actives :", error);
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture publicités actives.",
+        error: error.message,
+      });
     }
 
     const ads = [];
@@ -2898,10 +2851,55 @@ app.get("/api/partner-ads/active", async (req, res) => {
       ads,
     });
   } catch (err) {
-    console.error("Erreur publicités actives :", err);
+    console.error("Erreur serveur publicités actives :", err);
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur publicités actives.",
+      error: err.message,
+    });
+  }
+});
+
+app.get("/api/partner-ads/me", async (req, res) => {
+  try {
+    const ownerEmail = normalizeEmail(req.query.email);
+    const isAdminOwner = ownerEmail === "fasterame@gmail.com";
+
+    if (!ownerEmail) {
+      return res.status(400).json({
+        ok: false,
+        message: "Email manquant.",
+      });
+    }
+
+    const subscriptionActive = isAdminOwner
+      ? true
+      : await isProfessionalSubscriptionActive(ownerEmail);
+
+    const { data, error } = await supabase
+      .from("partner_ads")
+      .select("*")
+      .eq("owner_email", ownerEmail)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture banderole.",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      subscription_active: subscriptionActive,
+      ad: data?.[0] || null,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur banderole.",
       error: err.message,
     });
   }
@@ -2925,9 +2923,8 @@ app.post("/api/partner-ads/upsert", async (req, res) => {
     } = req.body;
 
     const ownerEmail = normalizeEmail(owner_email);
-const ownerRole = String(owner_role || "").trim().toLowerCase();
-const isAdminOwner = ownerEmail === "fasterame@gmail.com";
-
+    const ownerRole = String(owner_role || "").trim().toLowerCase();
+    const isAdminOwner = ownerEmail === "fasterame@gmail.com";
 
     if (!ownerEmail) {
       return res.status(400).json({
@@ -2936,15 +2933,17 @@ const isAdminOwner = ownerEmail === "fasterame@gmail.com";
       });
     }
 
-    const subscriptionActive = await isProfessionalSubscriptionActive(ownerEmail);
+    const subscriptionActive = isAdminOwner
+      ? true
+      : await isProfessionalSubscriptionActive(ownerEmail);
 
-   if (!subscriptionActive && !isAdminOwner) {
-  return res.status(403).json({
-    ok: false,
-    message:
-      "Abonnement professionnel HAVENA requis pour créer ou afficher une banderole.",
-  });
-}
+    if (!subscriptionActive && !isAdminOwner) {
+      return res.status(403).json({
+        ok: false,
+        message:
+          "Abonnement professionnel HAVENA requis pour créer ou afficher une banderole.",
+      });
+    }
 
     const publicAdFields = [
       business_name,
@@ -3047,7 +3046,6 @@ const isAdminOwner = ownerEmail === "fasterame@gmail.com";
     });
   } catch (error) {
     console.error("Erreur serveur /api/partner-ads/upsert :", error);
-
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur pendant l’enregistrement de la banderole.",
@@ -3081,15 +3079,20 @@ app.post("/api/partner-ads/:id/view", async (req, res) => {
       });
     }
 
-    const subscriptionActive = await isProfessionalSubscriptionActive(ad.owner_email);
+    const ownerEmail = normalizeEmail(ad.owner_email);
+    const isAdminOwner = ownerEmail === "fasterame@gmail.com";
 
-    if (!subscriptionActive) {
-      await deactivateAdsForEmail(ad.owner_email);
+    if (!isAdminOwner) {
+      const subscriptionActive = await isProfessionalSubscriptionActive(ownerEmail);
 
-      return res.status(403).json({
-        ok: false,
-        message: "Abonnement expiré. Publicité désactivée.",
-      });
+      if (!subscriptionActive) {
+        await deactivateAdsForEmail(ownerEmail);
+
+        return res.status(403).json({
+          ok: false,
+          message: "Abonnement expiré. Publicité désactivée.",
+        });
+      }
     }
 
     const { error: updateError } = await supabase
@@ -3102,7 +3105,6 @@ app.post("/api/partner-ads/:id/view", async (req, res) => {
 
     if (updateError) {
       console.error("Erreur compteur vue publicité :", updateError);
-
       return res.status(500).json({
         ok: false,
         message: "Impossible de compter la vue.",
@@ -3115,7 +3117,6 @@ app.post("/api/partner-ads/:id/view", async (req, res) => {
     });
   } catch (error) {
     console.error("Erreur serveur /api/partner-ads/:id/view :", error);
-
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur pendant le comptage de vue.",
@@ -3148,15 +3149,20 @@ app.post("/api/partner-ads/:id/click", async (req, res) => {
       });
     }
 
-    const subscriptionActive = await isProfessionalSubscriptionActive(ad.owner_email);
+    const ownerEmail = normalizeEmail(ad.owner_email);
+    const isAdminOwner = ownerEmail === "fasterame@gmail.com";
 
-    if (!subscriptionActive) {
-      await deactivateAdsForEmail(ad.owner_email);
+    if (!isAdminOwner) {
+      const subscriptionActive = await isProfessionalSubscriptionActive(ownerEmail);
 
-      return res.status(403).json({
-        ok: false,
-        message: "Abonnement expiré. Publicité désactivée.",
-      });
+      if (!subscriptionActive) {
+        await deactivateAdsForEmail(ownerEmail);
+
+        return res.status(403).json({
+          ok: false,
+          message: "Abonnement expiré. Publicité désactivée.",
+        });
+      }
     }
 
     const { error: updateError } = await supabase
@@ -3169,7 +3175,6 @@ app.post("/api/partner-ads/:id/click", async (req, res) => {
 
     if (updateError) {
       console.error("Erreur compteur clic publicité :", updateError);
-
       return res.status(500).json({
         ok: false,
         message: "Impossible de compter le clic.",
@@ -3182,13 +3187,13 @@ app.post("/api/partner-ads/:id/click", async (req, res) => {
     });
   } catch (error) {
     console.error("Erreur serveur /api/partner-ads/:id/click :", error);
-
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur pendant le comptage du clic.",
     });
   }
 });
+
 
 /* ===============================
    FRANCE TRAVAIL - OFFRES PAR PAYS
