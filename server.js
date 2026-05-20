@@ -2862,48 +2862,46 @@ app.get("/api/partner-ads/active", async (req, res) => {
 });
 
 
-app.get("/api/partner-ads/me", async (req, res) => {
+app.get("/api/partner-ads/active", async (req, res) => {
   try {
-const ownerEmail = normalizeEmail(req.query.email);
-const isAdminOwner = ownerEmail === "fasterame@gmail.com";
-
-
-    if (!ownerEmail) {
-      return res.status(400).json({
-        ok: false,
-        message: "Email manquant.",
-      });
-    }
-
-  const active = isAdminOwner
-  ? true
-  : await isProfessionalSubscriptionActive(ownerEmail);
-
-
     const { data, error } = await supabase
       .from("partner_ads")
       .select("*")
-      .eq("owner_email", ownerEmail)
+      .eq("is_active", true)
       .order("updated_at", { ascending: false })
-      .limit(1);
+      .limit(20);
 
     if (error) {
-      return res.status(500).json({
-        ok: false,
-        message: "Erreur lecture banderole.",
-        error: error.message,
-      });
+      throw error;
+    }
+
+    const ads = [];
+
+    for (const ad of data || []) {
+      const ownerEmail = normalizeEmail(ad.owner_email);
+      const isAdminOwner = ownerEmail === "fasterame@gmail.com";
+
+      if (isAdminOwner) {
+        ads.push(ad);
+        continue;
+      }
+
+      const subscriptionActive = await isProfessionalSubscriptionActive(ownerEmail);
+
+      if (subscriptionActive) {
+        ads.push(ad);
+      }
     }
 
     return res.json({
       ok: true,
-      subscription_active: active,
-      ad: data?.[0] || null,
+      ads,
     });
   } catch (err) {
+    console.error("Erreur publicités actives :", err);
     return res.status(500).json({
       ok: false,
-      message: "Erreur serveur banderole.",
+      message: "Erreur serveur publicités actives.",
       error: err.message,
     });
   }
