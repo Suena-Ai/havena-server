@@ -22,6 +22,15 @@ const RESET_PASSWORD_SECRET =
   process.env.STRIPE_WEBHOOK_SECRET ||
   "havena-reset-secret";
 
+function normalizeEmail(email = "") {
+  return String(email || "").trim().toLowerCase();
+}
+
+function unixToIso(value) {
+  if (!value) return null;
+  return new Date(Number(value) * 1000).toISOString();
+}
+
 function containsForbiddenContactInfo(text = "") {
   const value = String(text || "").toLowerCase().trim();
 
@@ -94,10 +103,9 @@ function containsForbiddenContactInfo(text = "") {
 }
 
 function buildEmailConfirmToken(email) {
-  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const normalizedEmail = normalizeEmail(email);
   const expiresAt = Date.now() + 1000 * 60 * 60 * 24;
   const payload = `confirm-email|${normalizedEmail}|${expiresAt}`;
-
   const signature = crypto
     .createHmac("sha256", RESET_PASSWORD_SECRET)
     .update(payload)
@@ -119,14 +127,13 @@ function verifyEmailConfirmToken(token, email) {
       return { ok: false, message: "Token invalide" };
     }
 
-    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
 
     if (tokenEmail !== normalizedEmail) {
       return { ok: false, message: "Email invalide pour ce lien" };
     }
 
     const payload = `${type}|${tokenEmail}|${expiresAtRaw}`;
-
     const expectedSignature = crypto
       .createHmac("sha256", RESET_PASSWORD_SECRET)
       .update(payload)
@@ -149,10 +156,9 @@ function verifyEmailConfirmToken(token, email) {
 }
 
 function buildResetPasswordToken(email) {
-  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const normalizedEmail = normalizeEmail(email);
   const expiresAt = Date.now() + 1000 * 60 * 30;
   const payload = `${normalizedEmail}|${expiresAt}`;
-
   const signature = crypto
     .createHmac("sha256", RESET_PASSWORD_SECRET)
     .update(payload)
@@ -174,14 +180,13 @@ function verifyResetPasswordToken(token, email) {
       return { ok: false, message: "Token invalide" };
     }
 
-    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
 
     if (tokenEmail !== normalizedEmail) {
       return { ok: false, message: "Email invalide pour ce lien" };
     }
 
     const payload = `${tokenEmail}|${expiresAtRaw}`;
-
     const expectedSignature = crypto
       .createHmac("sha256", RESET_PASSWORD_SECRET)
       .update(payload)
@@ -201,6 +206,107 @@ function verifyResetPasswordToken(token, email) {
   } catch (error) {
     return { ok: false, message: "Token invalide" };
   }
+}
+
+async function getUserByEmail(email) {
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail) return null;
+
+  const { data } = await supabase
+    .from("havena_users")
+    .select("id, email, role, first_name, last_name, email_confirmed")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  return data || null;
+}
+
+async function upsertProfessionalSubscriptionFromStripe(subscription, fallbackEmail = "", fallbackRole = "") {
+  if (!subscription || !subscription.id) return;
+
+  let email = normalizeEmail(subscription?.metadata?.email || fallbackEmail);
+  let role = String(subscription?.metadata?.role || fallbackRole || "").trim().toLowerCase();
+
+  const customerId =
+    typeof subscription.customer === "string"
+      ? subscription.customer
+      : subscription.customer?.id || "";
+
+  if (!email && customerId) {
+    try {
+      const customer = await stripe.customers.retrieve(customerId);
+      email = normalizeEmail(customer?.email || "");
+    } catch (error) {
+      console.error("Erreur récupération customer Stripe :", error.message);
+    }
+  }
+
+  const firstItem = subscription.items?.data?.[0] || null;
+  const stripePriceId = firstItem?.price?.id || "";
+
+  const payload = {
+    email,
+    role,
+    stripe_customer_id: customerId || null,
+    stripe_subscription_id: subscription.id,
+    stripe_price_id: stripePriceId || null,
+    status: subscription.status || "inactive",
+    current_period_start:
+      unixToIso(subscription.current_period_start) ||
+      unixToIso(firstItem?.current_period_start),
+    current_period_end:
+      unixToIso(subscription.current_period_end) ||
+      unixToIso(firstItem?.current_period_end),
+    cancel_at_period_end: !!subscription.cancel_at_period_end,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from("professional_subscriptions")
+    .upsert(payload, { onConflict: "stripe_subscription_id" });
+
+  if (error) {
+    console.error("Erreur upsert abonnement professionnel :", error);
+  }
+}
+
+async function isProfessionalSubscriptionActive(email) {
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail) return false;
+
+  const nowIso = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("professional_subscriptions")
+    .select("*")
+    .eq("email", normalizedEmail)
+    .in("status", ["active", "trialing"])
+    .gte("current_period_end", nowIso)
+    .order("current_period_end", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.error("Erreur vérification abonnement actif :", error);
+    return false;
+  }
+
+  return !!(data && data.length > 0);
+}
+
+async function deactivateAdsForEmail(email) {
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail) return;
+
+  await supabase
+    .from("partner_ads")
+    .update({
+      is_active: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("owner_email", normalizedEmail);
 }
 
 app.use(cors());
@@ -228,8 +334,22 @@ app.post(
       if (event.type === "checkout.session.completed") {
         const session = event.data.object;
 
-        const reservationId = session?.metadata?.reservationId;
-        const logementId = session?.metadata?.logementId;
+        const checkoutType = session?.metadata?.type || "";
+        const reservationId = session?.metadata?.reservationId || "";
+        const logementId = session?.metadata?.logementId || "";
+
+        if (checkoutType === "havena_professional_subscription") {
+          const subscriptionId = session.subscription;
+          const email = normalizeEmail(session?.metadata?.email || session.customer_email || "");
+          const role = String(session?.metadata?.role || "").trim().toLowerCase();
+
+          if (subscriptionId) {
+            const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+            await upsertProfessionalSubscriptionFromStripe(subscription, email, role);
+          }
+
+          return res.json({ received: true });
+        }
 
         if (reservationId) {
           await supabase
@@ -294,9 +414,7 @@ app.post(
                   `Bonjour ${logement.hebergeur_nom || "Hébergeur"},\n\n` +
                   `Une réservation a été confirmée pour votre logement.\n` +
                   `Logement : ${logement.titre || ""}\n` +
-                  `Client : ${reservation?.prenom || ""} ${
-                    reservation?.nom || ""
-                  }\n` +
+                  `Client : ${reservation?.prenom || ""} ${reservation?.nom || ""}\n` +
                   `Email client : ${reservation?.email || ""}\n` +
                   `Dates : ${reservation?.dates || ""}\n` +
                   `Acompte payé : ${reservation?.acompte || ""}\n\n` +
@@ -314,6 +432,43 @@ app.post(
         }
       }
 
+      if (
+        event.type === "customer.subscription.created" ||
+        event.type === "customer.subscription.updated"
+      ) {
+        const subscription = event.data.object;
+        await upsertProfessionalSubscriptionFromStripe(subscription);
+      }
+
+      if (event.type === "customer.subscription.deleted") {
+        const subscription = event.data.object;
+        await upsertProfessionalSubscriptionFromStripe(subscription);
+
+        const email = normalizeEmail(subscription?.metadata?.email || "");
+
+        if (email) {
+          await deactivateAdsForEmail(email);
+        }
+      }
+
+      if (event.type === "invoice.payment_failed") {
+        const invoice = event.data.object;
+        const subscriptionId =
+          typeof invoice.subscription === "string"
+            ? invoice.subscription
+            : invoice.subscription?.id;
+
+        if (subscriptionId) {
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+          await upsertProfessionalSubscriptionFromStripe(subscription);
+
+          const email = normalizeEmail(subscription?.metadata?.email || "");
+          if (email && subscription.status !== "active" && subscription.status !== "trialing") {
+            await deactivateAdsForEmail(email);
+          }
+        }
+      }
+
       return res.json({ received: true });
     } catch (err) {
       console.error("Erreur traitement webhook Stripe :", err);
@@ -325,8 +480,8 @@ app.post(
   }
 );
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 app.get("/", (req, res) => {
   res.json({
@@ -370,7 +525,7 @@ app.post("/api/auth/register", async (req, res) => {
       });
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
     const normalizedRole = String(role).trim().toLowerCase();
 
     const allowedRoles = ["saisonnier", "etudiant", "employeur", "hebergeur"];
@@ -455,9 +610,7 @@ app.post("/api/auth/register", async (req, res) => {
 
     if (
       (normalizedRole === "saisonnier" || normalizedRole === "etudiant") &&
-      publicRegisterCandidateFields.some((field) =>
-        containsForbiddenContactInfo(field)
-      )
+      publicRegisterCandidateFields.some((field) => containsForbiddenContactInfo(field))
     ) {
       return res.status(400).json({
         ok: false,
@@ -522,7 +675,6 @@ app.post("/api/auth/register", async (req, res) => {
     }
 
     const confirmToken = buildEmailConfirmToken(normalizedEmail);
-
     const confirmLink = `${FRONTEND_URL}/confirm-email?token=${encodeURIComponent(
       confirmToken
     )}&email=${encodeURIComponent(normalizedEmail)}`;
@@ -571,7 +723,7 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
     const normalizedRole = String(role).trim().toLowerCase();
 
     const { data: user, error } = await supabase
@@ -674,7 +826,7 @@ app.post("/api/auth/login", async (req, res) => {
 app.get("/api/auth/confirm-email", async (req, res) => {
   try {
     const { token, email } = req.query;
-    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
 
     if (!token || !normalizedEmail) {
       return res.status(400).json({
@@ -727,7 +879,7 @@ app.get("/api/auth/confirm-email", async (req, res) => {
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
     const { email } = req.body;
-    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
 
     if (!normalizedEmail) {
       return res.status(400).json({
@@ -752,7 +904,6 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 
     if (user) {
       const token = buildResetPasswordToken(normalizedEmail);
-
       const resetLink = `${FRONTEND_URL}/reset-password?token=${encodeURIComponent(
         token
       )}&email=${encodeURIComponent(normalizedEmail)}`;
@@ -794,7 +945,8 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 app.post("/api/auth/reset-password", async (req, res) => {
   try {
     const { email, token, newPassword } = req.body;
-    const normalizedEmail = String(email || "").trim().toLowerCase();
+
+    const normalizedEmail = normalizeEmail(email);
     const normalizedPassword = String(newPassword || "").trim();
 
     if (!normalizedEmail || !token || !normalizedPassword) {
@@ -866,7 +1018,157 @@ app.post("/api/auth/reset-password", async (req, res) => {
 });
 
 /* =========================
+   STRIPE ABONNEMENT HAVENA PRO 39,90 €
+========================= */
+
+app.post("/api/stripe/havena-pro/create-checkout-session", async (req, res) => {
+  try {
+    const { email, role } = req.body;
+
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedRole = String(role || "").trim().toLowerCase();
+
+    if (!normalizedEmail || !normalizedRole) {
+      return res.status(400).json({
+        ok: false,
+        message: "Email et rôle obligatoires.",
+      });
+    }
+
+    if (!["employeur", "hebergeur", "partenaire"].includes(normalizedRole)) {
+      return res.status(403).json({
+        ok: false,
+        message: "Abonnement réservé aux professionnels HAVENA.",
+      });
+    }
+
+    if (!process.env.STRIPE_HAVENA_PRO_PRICE_ID) {
+      return res.status(500).json({
+        ok: false,
+        message: "STRIPE_HAVENA_PRO_PRICE_ID manquant côté serveur.",
+      });
+    }
+
+    const user = await getUserByEmail(normalizedEmail);
+
+    if (!user && normalizedRole !== "partenaire") {
+      return res.status(404).json({
+        ok: false,
+        message: "Compte professionnel introuvable.",
+      });
+    }
+
+    if (user && user.role !== normalizedRole) {
+      return res.status(403).json({
+        ok: false,
+        message: `Cette adresse email est liée au profil "${user.role}".`,
+      });
+    }
+
+    if (user && !user.email_confirmed) {
+      return res.status(403).json({
+        ok: false,
+        message: "Adresse email non confirmée.",
+      });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      customer_email: normalizedEmail,
+      line_items: [
+        {
+          price: process.env.STRIPE_HAVENA_PRO_PRICE_ID,
+          quantity: 1,
+        },
+      ],
+      metadata: {
+        type: "havena_professional_subscription",
+        email: normalizedEmail,
+        role: normalizedRole,
+      },
+      subscription_data: {
+        metadata: {
+          type: "havena_professional_subscription",
+          email: normalizedEmail,
+          role: normalizedRole,
+        },
+      },
+      success_url: `${FRONTEND_URL}/${normalizedRole}?subscription=success`,
+      cancel_url: `${FRONTEND_URL}/${normalizedRole}?subscription=cancel`,
+    });
+
+    return res.json({
+      ok: true,
+      url: session.url,
+    });
+  } catch (err) {
+    console.error("Erreur création abonnement HAVENA Pro :", err);
+
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur création abonnement HAVENA Pro.",
+      error: err.message,
+    });
+  }
+});
+
+app.get("/api/pro-subscription/status", async (req, res) => {
+  try {
+    const email = normalizeEmail(req.query.email);
+
+    if (!email) {
+      return res.status(400).json({
+        ok: false,
+        active: false,
+        message: "Email manquant.",
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from("professional_subscriptions")
+      .select("*")
+      .eq("email", email)
+      .in("status", ["active", "trialing", "past_due", "canceled", "unpaid"])
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        active: false,
+        message: "Erreur vérification abonnement.",
+        error: error.message,
+      });
+    }
+
+    const subscription = data?.[0] || null;
+    const active =
+      !!subscription &&
+      ["active", "trialing"].includes(subscription.status) &&
+      (!subscription.current_period_end ||
+        subscription.current_period_end >= nowIso);
+
+    return res.json({
+      ok: true,
+      active,
+      subscription,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      active: false,
+      message: "Erreur serveur abonnement.",
+      error: err.message,
+    });
+  }
+});
+
+/* =========================
    STRIPE CONNECT HEBERGEUR
+   0 % COMMISSION HAVENA
 ========================= */
 
 app.post("/api/stripe/connect/start", async (req, res) => {
@@ -880,7 +1182,7 @@ app.post("/api/stripe/connect/start", async (req, res) => {
       });
     }
 
-    const normalizedEmail = String(hebergeurEmail).trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(hebergeurEmail);
 
     const { data: existingUser, error: userError } = await supabase
       .from("havena_users")
@@ -968,7 +1270,7 @@ app.get("/api/stripe/connect/complete", async (req, res) => {
     }
 
     const stripeAccountId = String(account).trim();
-    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
 
     const stripeAccount = await stripe.accounts.retrieve(stripeAccountId);
 
@@ -1010,7 +1312,7 @@ app.get("/api/stripe/connect/status", async (req, res) => {
       });
     }
 
-    const normalizedEmail = String(hebergeurEmail).trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(hebergeurEmail);
 
     const { data: user, error } = await supabase
       .from("havena_users")
@@ -1095,7 +1397,6 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
     }
 
     const unitAmount = montantNumber * 100;
-    const applicationFeeAmount = Math.round(unitAmount * 0.06);
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -1110,9 +1411,7 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
           price_data: {
             currency: "eur",
             product_data: {
-              name: `Réservation HAVENA - ${
-                logement.titre || `${prenom} ${nom}`
-              }`,
+              name: `Réservation HAVENA - ${logement.titre || `${prenom} ${nom}`}`,
             },
             unit_amount: unitAmount,
           },
@@ -1120,7 +1419,6 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
         },
       ],
       payment_intent_data: {
-        application_fee_amount: applicationFeeAmount,
         transfer_data: {
           destination: logement.stripe_account_id,
         },
@@ -1134,7 +1432,8 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
       url: session.url,
       reservationId,
       logementId,
-      applicationFeeAmount,
+      applicationFeeAmount: 0,
+      commission: "0%",
     });
   } catch (err) {
     console.error("Erreur création checkout Stripe :", err);
@@ -1162,7 +1461,7 @@ app.get("/api/message-unlocks/check", async (req, res) => {
       });
     }
 
-    const normalizedEmployerEmail = String(employerEmail).trim().toLowerCase();
+    const normalizedEmployerEmail = normalizeEmail(employerEmail);
     const normalizedCandidateId = Number(candidateId);
 
     if (!normalizedEmployerEmail || !normalizedCandidateId) {
@@ -1489,9 +1788,7 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
       });
     }
 
-    const normalizedHebergeurEmail = String(hebergeur_email || "")
-      .trim()
-      .toLowerCase();
+    const normalizedHebergeurEmail = normalizeEmail(hebergeur_email);
 
     let image_url = "";
 
@@ -1819,9 +2116,7 @@ app.put("/api/logements/:id", async (req, res) => {
     ];
 
     if (
-      publicLogementUpdateFields.some((field) =>
-        containsForbiddenContactInfo(field)
-      )
+      publicLogementUpdateFields.some((field) => containsForbiddenContactInfo(field))
     ) {
       return res.status(400).json({
         ok: false,
@@ -1920,9 +2215,7 @@ app.post("/api/offres-emploi", async (req, res) => {
       profil: profil || "",
       description: description || "",
       statut: statut || "Offre active",
-      employeur_email: employeur_email
-        ? String(employeur_email).trim().toLowerCase()
-        : "",
+      employeur_email: employeur_email ? normalizeEmail(employeur_email) : "",
     };
 
     const { data, error } = await supabase
@@ -2159,7 +2452,7 @@ app.post("/api/candidatures-emploi", async (req, res) => {
       }
 
       if (offreData?.employeur_email) {
-        employeurEmail = String(offreData.employeur_email).trim().toLowerCase();
+        employeurEmail = normalizeEmail(offreData.employeur_email);
       }
     }
 
@@ -2412,7 +2705,7 @@ app.put("/api/candidats/profil", async (req, res) => {
       });
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
 
     const publicCandidateProfileFields = [
       poste_recherche,
@@ -2432,9 +2725,7 @@ app.put("/api/candidats/profil", async (req, res) => {
     ];
 
     if (
-      publicCandidateProfileFields.some((field) =>
-        containsForbiddenContactInfo(field)
-      )
+      publicCandidateProfileFields.some((field) => containsForbiddenContactInfo(field))
     ) {
       return res.status(400).json({
         ok: false,
@@ -2521,14 +2812,42 @@ app.put("/api/candidats/profil", async (req, res) => {
 
 app.get("/api/partner-ads/active", async (req, res) => {
   try {
+    const nowIso = new Date().toISOString();
+
+    const { data: activeSubscriptions, error: subscriptionError } = await supabase
+      .from("professional_subscriptions")
+      .select("email")
+      .in("status", ["active", "trialing"])
+      .gte("current_period_end", nowIso);
+
+    if (subscriptionError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture abonnements actifs.",
+        error: subscriptionError.message,
+      });
+    }
+
+    const activeEmails = (activeSubscriptions || [])
+      .map((item) => normalizeEmail(item.email))
+      .filter(Boolean);
+
+    if (activeEmails.length === 0) {
+      return res.json({
+        ok: true,
+        ads: [],
+      });
+    }
+
     const { data, error } = await supabase
       .from("partner_ads")
       .select(
-        "id, role, business_name, city, title, description, promotion, logo_url, image_urls, music_key, link_url, views_count, clicks_count, is_active, created_at"
+        "id, owner_email, owner_role, business_name, city, title, description, promotion, logo_url, image_urls, music_key, link_url, views_count, clicks_count, is_active, created_at"
       )
       .eq("is_active", true)
+      .in("owner_email", activeEmails)
       .order("created_at", { ascending: false })
-      .limit(10);
+      .limit(20);
 
     if (error) {
       console.error("Erreur récupération publicités actives :", error);
@@ -2553,6 +2872,195 @@ app.get("/api/partner-ads/active", async (req, res) => {
   }
 });
 
+app.get("/api/partner-ads/me", async (req, res) => {
+  try {
+    const ownerEmail = normalizeEmail(req.query.email);
+
+    if (!ownerEmail) {
+      return res.status(400).json({
+        ok: false,
+        message: "Email manquant.",
+      });
+    }
+
+    const active = await isProfessionalSubscriptionActive(ownerEmail);
+
+    const { data, error } = await supabase
+      .from("partner_ads")
+      .select("*")
+      .eq("owner_email", ownerEmail)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture banderole.",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      subscription_active: active,
+      ad: data?.[0] || null,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur banderole.",
+      error: err.message,
+    });
+  }
+});
+
+app.post("/api/partner-ads/upsert", async (req, res) => {
+  try {
+    const {
+      owner_email,
+      owner_role,
+      business_name,
+      city,
+      title,
+      description,
+      promotion,
+      logo_url,
+      image_urls,
+      music_key,
+      link_url,
+      is_active,
+    } = req.body;
+
+    const ownerEmail = normalizeEmail(owner_email);
+    const ownerRole = String(owner_role || "").trim().toLowerCase();
+
+    if (!ownerEmail) {
+      return res.status(400).json({
+        ok: false,
+        message: "Email propriétaire manquant.",
+      });
+    }
+
+    const subscriptionActive = await isProfessionalSubscriptionActive(ownerEmail);
+
+    if (!subscriptionActive) {
+      return res.status(403).json({
+        ok: false,
+        message:
+          "Abonnement professionnel HAVENA requis pour créer ou afficher une banderole publicitaire.",
+      });
+    }
+
+    const publicAdFields = [
+      business_name,
+      city,
+      title,
+      description,
+      promotion,
+      link_url,
+    ];
+
+    if (publicAdFields.some((field) => containsForbiddenContactInfo(field))) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Coordonnées directes interdites dans la publicité. Utilisez uniquement un lien ou une fiche HAVENA autorisée.",
+      });
+    }
+
+    const safeImageUrls = Array.isArray(image_urls) ? image_urls : [];
+
+    const payload = {
+      owner_email: ownerEmail,
+      owner_role: ownerRole || "",
+      business_name: business_name || "",
+      city: city || "",
+      title: title || "",
+      description: description || "",
+      promotion: promotion || "",
+      logo_url: logo_url || "",
+      image_urls: safeImageUrls,
+      music_key: music_key || "",
+      link_url: link_url || "",
+      is_active: !!is_active,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: existingAds, error: readError } = await supabase
+      .from("partner_ads")
+      .select("id")
+      .eq("owner_email", ownerEmail)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (readError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture publicité existante.",
+        error: readError.message,
+      });
+    }
+
+    let result;
+
+    if (existingAds && existingAds.length > 0) {
+      const { data, error } = await supabase
+        .from("partner_ads")
+        .update(payload)
+        .eq("id", existingAds[0].id)
+        .select()
+        .single();
+
+      if (error) {
+        return res.status(500).json({
+          ok: false,
+          message: "Erreur modification banderole.",
+          error: error.message,
+        });
+      }
+
+      result = data;
+    } else {
+      const { data, error } = await supabase
+        .from("partner_ads")
+        .insert([
+          {
+            ...payload,
+            views_count: 0,
+            clicks_count: 0,
+            created_at: new Date().toISOString(),
+          },
+        ])
+        .select()
+        .single();
+
+      if (error) {
+        return res.status(500).json({
+          ok: false,
+          message: "Erreur création banderole.",
+          error: error.message,
+        });
+      }
+
+      result = data;
+    }
+
+    return res.json({
+      ok: true,
+      message: "Banderole enregistrée.",
+      ad: result,
+    });
+  } catch (error) {
+    console.error("Erreur serveur /api/partner-ads/upsert :", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur pendant l’enregistrement de la banderole.",
+      error: error.message,
+    });
+  }
+});
+
 app.post("/api/partner-ads/:id/view", async (req, res) => {
   try {
     const { id } = req.params;
@@ -2566,7 +3074,7 @@ app.post("/api/partner-ads/:id/view", async (req, res) => {
 
     const { data: ad, error: readError } = await supabase
       .from("partner_ads")
-      .select("id, views_count, is_active")
+      .select("id, views_count, is_active, owner_email")
       .eq("id", id)
       .eq("is_active", true)
       .single();
@@ -2578,10 +3086,22 @@ app.post("/api/partner-ads/:id/view", async (req, res) => {
       });
     }
 
+    const subscriptionActive = await isProfessionalSubscriptionActive(ad.owner_email);
+
+    if (!subscriptionActive) {
+      await deactivateAdsForEmail(ad.owner_email);
+
+      return res.status(403).json({
+        ok: false,
+        message: "Abonnement expiré. Publicité désactivée.",
+      });
+    }
+
     const { error: updateError } = await supabase
       .from("partner_ads")
       .update({
         views_count: Number(ad.views_count || 0) + 1,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", id);
 
@@ -2621,7 +3141,7 @@ app.post("/api/partner-ads/:id/click", async (req, res) => {
 
     const { data: ad, error: readError } = await supabase
       .from("partner_ads")
-      .select("id, clicks_count, is_active")
+      .select("id, clicks_count, is_active, owner_email")
       .eq("id", id)
       .eq("is_active", true)
       .single();
@@ -2633,10 +3153,22 @@ app.post("/api/partner-ads/:id/click", async (req, res) => {
       });
     }
 
+    const subscriptionActive = await isProfessionalSubscriptionActive(ad.owner_email);
+
+    if (!subscriptionActive) {
+      await deactivateAdsForEmail(ad.owner_email);
+
+      return res.status(403).json({
+        ok: false,
+        message: "Abonnement expiré. Publicité désactivée.",
+      });
+    }
+
     const { error: updateError } = await supabase
       .from("partner_ads")
       .update({
         clicks_count: Number(ad.clicks_count || 0) + 1,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", id);
 
@@ -2689,21 +3221,23 @@ async function getFranceTravailToken() {
   }
 
   const clientId = String(process.env.FRANCE_TRAVAIL_CLIENT_ID || "").trim();
-const clientSecret = String(process.env.FRANCE_TRAVAIL_CLIENT_SECRET || "").trim();
+  const clientSecret = String(process.env.FRANCE_TRAVAIL_CLIENT_SECRET || "").trim();
 
   if (!clientId || !clientSecret) {
     throw new Error("Variables France Travail manquantes.");
   }
 
   const body = new URLSearchParams();
+
   body.append("grant_type", "client_credentials");
   body.append("client_id", clientId);
   body.append("client_secret", clientSecret);
-  const scope = String(
-  process.env.FRANCE_TRAVAIL_SCOPE || "api_offresdemploiv2 o2dsoffre"
-).trim();
 
-body.append("scope", scope);
+  const scope = String(
+    process.env.FRANCE_TRAVAIL_SCOPE || "api_offresdemploiv2 o2dsoffre"
+  ).trim();
+
+  body.append("scope", scope);
 
   const response = await fetch(FRANCE_TRAVAIL_TOKEN_URL, {
     method: "POST",
