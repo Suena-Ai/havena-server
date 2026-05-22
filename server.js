@@ -1794,9 +1794,10 @@ const hebergeurSubscriptionActive = await isProfessionalSubscriptionActive(norma
 if ( !hebergeurSubscriptionActive) {
   return res.status(403).json({
 OK : Faux,
-    message: "Abonnement HAVENA Professionnel requis pour publier un logement et créer une banderole.",
+    message: "Veuillez vous abonner à HAVENA Professionnel avant de publier un logement ou créer une banderole.",
   });
 }
+
 
     let image_url = "";
 
