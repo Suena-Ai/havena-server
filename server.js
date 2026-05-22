@@ -1793,7 +1793,7 @@ const hebergeurSubscriptionActive = await isProfessionalSubscriptionActive(norma
 
 if ( !hebergeurSubscriptionActive) {
   return res.status(403).json({
-OK : Faux,
+OK : false,
     message: "Veuillez vous abonner à HAVENA Professionnel avant de publier un logement ou créer une banderole.",
   });
 }
