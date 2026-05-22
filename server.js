@@ -1789,6 +1789,14 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
     }
 
     const normalizedHebergeurEmail = normalizeEmail(hebergeur_email);
+const hebergeurSubscriptionActive = await isProfessionalSubscriptionActive(normalizedHebergeurEmail) ;
+
+if ( !hebergeurSubscriptionActive) {
+  return res.status(403).json({
+OK : Faux,
+    message: "Abonnement HAVENA Professionnel requis pour publier un logement et créer une banderole.",
+  });
+}
 
     let image_url = "";
 
