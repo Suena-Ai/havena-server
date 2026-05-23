@@ -1995,6 +1995,247 @@ app.post("/api/logements/:id/disponibilites", async (req, res) => {
     });
   }
 });
+// ===============================
+// HAVENA - OFFRES EMPLOI ADZUNA
+// ===============================
+
+const ADZUNA_COUNTRIES = {
+  // PAYS OK ADZUNA
+  france: "fr",
+  allemagne: "de",
+  italie: "it",
+  paysbas: "nl",
+  "pays-bas": "nl",
+  australie: "au",
+  suisse: "ch",
+  etatsunis: "us",
+  "etats-unis": "us",
+  "états-unis": "us",
+  "nouvelle-zelande": "nz",
+  "nouvelle-zélande": "nz",
+  bresil: "br",
+  "brésil": "br",
+  pologne: "pl",
+  afriquedusud: "za",
+  "afrique-du-sud": "za",
+  canada: "ca",
+  inde: "in",
+  singapour: "sg",
+
+  // PAYS NON DISPONIBLES VIA ADZUNA POUR L’INSTANT
+  espagne: null,
+  belgique: null,
+  portugal: null,
+  royaumeuni: null,
+  "royaume-uni": null,
+  luxembourg: null,
+  danemark: null,
+  norvege: null,
+  "norvège": null,
+  grece: null,
+  "grèce": null,
+  irlande: null,
+  finlande: null,
+  bulgarie: null,
+  suede: null,
+  "suède": null,
+  ukraine: null,
+  roumanie: null,
+  turquie: null,
+  autriche: null,
+
+  // AUTRES PAYS À COMPLÉTER PLUS TARD AVEC AUTRES API
+  maroc: null,
+  tunisie: null,
+  algerie: null,
+  "algérie": null,
+  senegal: null,
+  "sénégal": null,
+  "cote-divoire": null,
+  "côte-divoire": null,
+  "côte-d’ivoire": null,
+  japon: null,
+  chine: null,
+  vietnam: null,
+  philippines: null,
+  "arabie-saoudite": null,
+  "polynesie-francaise": null,
+  "polynésie-française": null,
+  "wallis-et-futuna": null,
+  "nouvelle-caledonie": null,
+  "nouvelle-calédonie": null,
+  argentine: null,
+  chili: null,
+  colombie: null,
+  "coree-du-sud": null,
+  "corée-du-sud": null,
+  indonesie: null,
+  "indonésie": null,
+  thailande: null,
+  "thaïlande": null,
+  "emirats-arabes-unis": null,
+  "émirats-arabes-unis": null,
+};
+
+
+function normalizeHavenaCountry(value = "") {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[’']/g, "")
+    .replace(/\s+/g, "-");
+}
+
+function detectContractType(title = "", description = "") {
+  const text = `${title} ${description}`.toLowerCase();
+
+  if (
+    text.includes("saisonnier") ||
+    text.includes("travail saisonnier") ||
+    text.includes("seasonal") ||
+    text.includes("temporada") ||
+    text.includes("stagionale") ||
+    text.includes("saisonarbeit")
+  ) {
+    return "Saisonnier";
+  }
+
+  if (text.includes("cdi") || text.includes("permanent")) {
+    return "CDI";
+  }
+
+  if (
+    text.includes("cdd") ||
+    text.includes("fixed term") ||
+    text.includes("temporary") ||
+    text.includes("temporaire")
+  ) {
+    return "CDD";
+  }
+
+  if (
+    text.includes("stage") ||
+    text.includes("internship") ||
+    text.includes("prácticas") ||
+    text.includes("praktikum")
+  ) {
+    return "Stage";
+  }
+
+  if (
+    text.includes("alternance") ||
+    text.includes("apprenticeship") ||
+    text.includes("apprentissage")
+  ) {
+    return "Alternance";
+  }
+
+  if (
+    text.includes("part time") ||
+    text.includes("temps partiel") ||
+    text.includes("teilzeit")
+  ) {
+    return "Temps partiel";
+  }
+
+  return "Non précisé";
+}
+
+app.get("/api/jobs/adzuna", async (req, res) => {
+  try {
+    const appId = process.env.ADZUNA_APP_ID;
+    const appKey = process.env.ADZUNA_APP_KEY;
+
+    if (!appId || !appKey) {
+      return res.status(500).json({
+        ok: false,
+        message: "Clés Adzuna manquantes dans les variables Render.",
+      });
+    }
+
+    const rawCountry = req.query.country || "france";
+    const normalizedCountry = normalizeHavenaCountry(rawCountry);
+    const adzunaCountryCode = ADZUNA_COUNTRIES[normalizedCountry];
+
+    if (!adzunaCountryCode) {
+      return res.json({
+        ok: true,
+        source: "adzuna",
+        country: rawCountry,
+        supported: false,
+        offers: [],
+        message:
+          "Ce pays n’est pas encore disponible via Adzuna. Il faudra ajouter une autre API emploi pour ce pays.",
+      });
+    }
+
+    const page = Number(req.query.page || 1);
+    const what = req.query.what || "";
+    const resultsPerPage = Number(req.query.limit || 20);
+
+   const params = new URLSearchParams();
+
+params.append("app_id", String(appId).trim());
+params.append("app_key", String(appKey).trim());
+params.append("results_per_page", String(resultsPerPage));
+
+if (what) {
+  params.append("what", String(what).trim());
+}
+
+const url = `http://api.adzuna.com/v1/api/jobs/${adzunaCountryCode}/search/${page}?${params.toString()}`;
+
+console.log("ADZUNA COUNTRY:", adzunaCountryCode);
+console.log("ADZUNA URL:", url.replace(String(appKey).trim(), "HIDDEN_KEY"));
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+
+      return res.status(response.status).json({
+        ok: false,
+        message: "Erreur API Adzuna.",
+        details: errorText,
+      });
+    }
+
+    const data = await response.json();
+
+    const offers = (data.results || []).map((job) => ({
+      id: job.id,
+      title: job.title || "Offre sans titre",
+      company: job.company?.display_name || "Entreprise non précisée",
+      location: job.location?.display_name || "Lieu non précisé",
+      country: rawCountry,
+      contract_type: detectContractType(job.title, job.description),
+      salary_min: job.salary_min || null,
+      salary_max: job.salary_max || null,
+      description: job.description || "",
+      created: job.created || null,
+      redirect_url: job.redirect_url,
+      source: "Adzuna",
+    }));
+
+    return res.json({
+      ok: true,
+      source: "adzuna",
+      country: rawCountry,
+      supported: true,
+      count: data.count || offers.length,
+      offers,
+    });
+  } catch (error) {
+    console.error("Erreur /api/jobs/adzuna :", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur pendant la récupération des offres.",
+    });
+  }
+});
 
 app.delete("/api/logements/disponibilites/:disponibiliteId", async (req, res) => {
   try {
