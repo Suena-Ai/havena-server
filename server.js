@@ -2330,27 +2330,79 @@ const country = JOOBLE_COUNTRY_NAMES[normalizedCountry] || rawCountry;
       });
     }
 
-    const offers = Array.isArray(data.jobs)
-      ? data.jobs.map((job) => ({
-          id: job.id || job.link || `${job.title}-${job.company}`,
-          title: job.title || "Offre saisonnière",
-          company: job.company || "Entreprise",
-          location: job.location || country || "Localisation non précisée",
-          description: job.snippet || job.description || "",
-          salary: job.salary || "",
-          contract_type: "Saisonnier / job d’été",
-          created: job.updated || job.date || null,
-          redirect_url: job.link || "",
-          source: "Jooble",
-        }))
-      : [];
+    const JOOBLE_LOCATION_FILTERS = {
+  Spain: ["spain", "espagne", "madrid", "barcelona", "barcelone", "valencia", "sevilla", "malaga"],
+  Belgium: ["belgium", "belgique", "brussels", "bruxelles", "antwerp", "anvers"],
+  "United Kingdom": ["united kingdom", "uk", "england", "scotland", "wales", "london", "manchester", "birmingham"],
+  Norway: ["norway", "norvège", "oslo", "bergen", "trondheim"],
+  Sweden: ["sweden", "suède", "stockholm", "gothenburg", "malmö"],
+  Ukraine: ["ukraine", "kyiv", "kiev", "lviv", "odessa"],
+  Romania: ["romania", "roumanie", "bucharest", "bucarest", "cluj"],
+  Turkey: ["turkey", "turquie", "istanbul", "ankara", "antalya"],
+  Morocco: ["morocco", "maroc", "casablanca", "marrakech", "rabat", "agadir", "tanger"],
+  Senegal: ["senegal", "sénégal", "dakar"],
+  "Ivory Coast": ["ivory coast", "côte d’ivoire", "cote d'ivoire", "abidjan"],
+  Mexico: ["mexico", "mexique", "mexico city", "cancun", "guadalajara"],
+  Chile: ["chile", "chili", "santiago", "valparaiso"],
+  Colombia: ["colombia", "colombie", "bogota", "medellin", "cartagena"],
+  Argentina: ["argentina", "argentine", "buenos aires", "cordoba"],
+  Japan: ["japan", "japon", "tokyo", "osaka", "kyoto"],
+  China: ["china", "chine", "beijing", "pekin", "shanghai", "guangzhou"],
+  Vietnam: ["vietnam", "hanoi", "ho chi minh"],
+  Philippines: ["philippines", "manila", "cebu"],
+  "Saudi Arabia": ["saudi arabia", "arabie saoudite", "riyadh", "jeddah"],
+  "French Polynesia": ["french polynesia", "polynésie française", "polynesie francaise", "tahiti", "papeete"],
+  Portugal: ["portugal", "lisbon", "lisbonne", "porto", "algarve"],
+  Luxembourg: ["luxembourg"],
+  Ireland: ["ireland", "irlande", "dublin", "cork", "galway"],
+  Denmark: ["denmark", "danemark", "copenhagen", "copenhague"],
+  Finland: ["finland", "finlande", "helsinki"],
+  Bulgaria: ["bulgaria", "bulgarie", "sofia", "varna"],
+  Greece: ["greece", "grèce", "grece", "athens", "athènes", "crete", "crète"],
+  Tunisia: ["tunisia", "tunisie", "tunis", "djerba"],
+  Algeria: ["algeria", "algérie", "algerie", "algiers", "alger", "oran"],
+  "South Korea": ["south korea", "corée du sud", "coree du sud", "seoul", "busan"],
+  Indonesia: ["indonesia", "indonésie", "indonesie", "jakarta", "bali"],
+  Thailand: ["thailand", "thaïlande", "thailande", "bangkok", "phuket"],
+  "United Arab Emirates": ["united arab emirates", "uae", "émirats arabes unis", "emirats arabes unis", "dubai", "abu dhabi"],
+  "Wallis and Futuna": ["futuna", "wallis and futuna", "wallis-et-futuna"],
+  "New Caledonia": ["new caledonia", "noumea", "nouméa", "nouvelle-calédonie", "nouvelle-caledonie"],
+};
+
+const rawJobs = Array.isArray(data.jobs) ? data.jobs : [];
+
+const allowedLocations = JOOBLE_LOCATION_FILTERS[country];
+
+const filteredJobs = allowedLocations
+  ? rawJobs.filter((job) => {
+      const locationText = String(job.location || "").toLowerCase();
+
+      return allowedLocations.some((term) =>
+        locationText.includes(term.toLowerCase())
+      );
+    })
+  : rawJobs;
+
+const offers = filteredJobs.map((job) => ({
+  id: job.id || job.link || `${job.title}-${job.company}`,
+  title: job.title || "Offre saisonnière",
+  company: job.company || "Entreprise",
+  location: job.location || country || "Localisation non précisée",
+  description: job.snippet || job.description || "",
+  salary: job.salary || "",
+  contract_type: "Saisonnier / job d’été",
+  created: job.updated || job.date || null,
+  redirect_url: job.link || "",
+  source: "Jooble",
+}));
+
 
     return res.json({
       ok: true,
       source: "jooble",
       country,
       what: keywords,
-      count: data.totalCount || offers.length,
+    count: offers.length,
       offers,
     });
   } catch (error) {
