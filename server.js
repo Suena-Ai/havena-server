@@ -2236,6 +2236,78 @@ console.log("ADZUNA URL:", url.replace(String(appKey).trim(), "HIDDEN_KEY"));
     });
   }
 });
+app.get("/api/jobs/jooble", async (req, res) => {
+  try {
+    const apiKey = process.env.JOOBLE_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({
+        ok: false,
+        error: "JOOBLE_API_KEY manquante dans les variables d'environnement.",
+      });
+    }
+
+    const country = String(req.query.country || "").trim();
+    const keywords = String(req.query.what || "seasonal summer job").trim();
+    const location = String(req.query.location || "").trim();
+
+    const joobleUrl = `https://jooble.org/api/${apiKey}`;
+
+    const response = await fetch(joobleUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        keywords,
+        location: location || country,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        ok: false,
+        source: "jooble",
+        error: "Erreur API Jooble",
+        details: data,
+      });
+    }
+
+    const offers = Array.isArray(data.jobs)
+      ? data.jobs.map((job) => ({
+          id: job.id || job.link || `${job.title}-${job.company}`,
+          title: job.title || "Offre saisonnière",
+          company: job.company || "Entreprise",
+          location: job.location || country || "Localisation non précisée",
+          description: job.snippet || job.description || "",
+          salary: job.salary || "",
+          contract_type: "Saisonnier / job d’été",
+          created: job.updated || job.date || null,
+          redirect_url: job.link || "",
+          source: "Jooble",
+        }))
+      : [];
+
+    return res.json({
+      ok: true,
+      source: "jooble",
+      country,
+      what: keywords,
+      count: data.totalCount || offers.length,
+      offers,
+    });
+  } catch (error) {
+    console.error("Erreur Jooble:", error);
+    return res.status(500).json({
+      ok: false,
+      source: "jooble",
+      error: "Erreur serveur Jooble",
+      details: error.message,
+    });
+  }
+});
 
 app.delete("/api/logements/disponibilites/:disponibiliteId", async (req, res) => {
   try {
