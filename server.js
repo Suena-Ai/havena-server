@@ -2236,6 +2236,59 @@ console.log("ADZUNA URL:", url.replace(String(appKey).trim(), "HIDDEN_KEY"));
     });
   }
 });
+const JOOBLE_COUNTRY_NAMES = {
+  espagne: "Spain",
+  belgique: "Belgium",
+  "royaume-uni": "United Kingdom",
+  royaumeuni: "United Kingdom",
+  norvege: "Norway",
+  "norvège": "Norway",
+  suede: "Sweden",
+  "suède": "Sweden",
+  ukraine: "Ukraine",
+  roumanie: "Romania",
+  turquie: "Turkey",
+  maroc: "Morocco",
+  senegal: "Senegal",
+  "sénégal": "Senegal",
+  "cote-divoire": "Ivory Coast",
+  "côte-divoire": "Ivory Coast",
+  "côte-d’ivoire": "Ivory Coast",
+  mexique: "Mexico",
+  chili: "Chile",
+  colombie: "Colombia",
+  argentine: "Argentina",
+  japon: "Japan",
+  chine: "China",
+  vietnam: "Vietnam",
+  philippines: "Philippines",
+  "arabie-saoudite": "Saudi Arabia",
+  "polynesie-francaise": "French Polynesia",
+  "polynésie-française": "French Polynesia",
+  portugal: "Portugal",
+  luxembourg: "Luxembourg",
+  irlande: "Ireland",
+  danemark: "Denmark",
+  finlande: "Finland",
+  bulgarie: "Bulgaria",
+  grece: "Greece",
+  "grèce": "Greece",
+  tunisie: "Tunisia",
+  algerie: "Algeria",
+  "algérie": "Algeria",
+  "coree-du-sud": "South Korea",
+  "corée-du-sud": "South Korea",
+  indonesie: "Indonesia",
+  "indonésie": "Indonesia",
+  thailande: "Thailand",
+  "thaïlande": "Thailand",
+  "emirats-arabes-unis": "United Arab Emirates",
+  "émirats-arabes-unis": "United Arab Emirates",
+  "wallis-et-futuna": "Wallis and Futuna",
+  "nouvelle-caledonie": "New Caledonia",
+  "nouvelle-calédonie": "New Caledonia",
+};
+
 app.get("/api/jobs/jooble", async (req, res) => {
   try {
     const apiKey = process.env.JOOBLE_API_KEY;
@@ -2247,7 +2300,9 @@ app.get("/api/jobs/jooble", async (req, res) => {
       });
     }
 
-    const country = String(req.query.country || "").trim();
+    const rawCountry = String(req.query.country || "").trim();
+const normalizedCountry = normalizeHavenaCountry(rawCountry);
+const country = JOOBLE_COUNTRY_NAMES[normalizedCountry] || rawCountry;
     const keywords = String(req.query.what || "seasonal summer job").trim();
     const location = String(req.query.location || "").trim();
 
