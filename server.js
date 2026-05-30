@@ -3908,6 +3908,61 @@ app.get("/api/documents", async (req, res) => {
     return res.status(500).json({ error: "Erreur serveur documents." });
   }
 });
+// ===============================
+// OUVERTURE SÉCURISÉE DOCUMENT HAVENA
+// Génère un lien temporaire Supabase Storage
+// ===============================
+
+app.get("/api/documents/open/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "ID document manquant.",
+      });
+    }
+
+    const { data: documentData, error: documentError } = await supabase
+      .from("documents")
+      .select("id, name, file_path")
+      .eq("id", id)
+      .single();
+
+    if (documentError || !documentData) {
+      console.error("Document introuvable:", documentError);
+      return res.status(404).json({
+        success: false,
+        error: "Document introuvable.",
+      });
+    }
+
+    const { data: signedData, error: signedError } = await supabase.storage
+      .from("documents")
+      .createSignedUrl(documentData.file_path, 60 * 5);
+
+    if (signedError || !signedData?.signedUrl) {
+      console.error("Erreur lien signé document:", signedError);
+      return res.status(500).json({
+        success: false,
+        error: "Impossible d’ouvrir le document.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      name: documentData.name,
+      url: signedData.signedUrl,
+    });
+  } catch (error) {
+    console.error("Erreur /api/documents/open/:id:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Erreur serveur ouverture document.",
+    });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`HAVENA server lancé sur le port ${PORT}`);
