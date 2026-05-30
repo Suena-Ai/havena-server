@@ -3779,6 +3779,135 @@ app.get("/api/offres-emploi/pays/:pays", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5055;
+// ===============================
+// DOCUMENTS HAVENA
+// Upload + lecture documents
+// Étudiants / saisonniers / employeurs / hébergeurs
+// ===============================
+
+app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
+  try {
+    const { userEmail, userRole, category, owner } = req.body;
+
+    if (!userEmail) {
+      return res.status(400).json({ error: "Email utilisateur manquant." });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "Aucun fichier reçu." });
+    }
+
+    const allowedRoles = ["etudiant", "saisonnier", "employeur", "hebergeur"];
+
+    const cleanRole = allowedRoles.includes(userRole)
+      ? userRole
+      : "etudiant";
+
+    const allowedMimeTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ];
+
+    if (!allowedMimeTypes.includes(req.file.mimetype)) {
+      return res.status(400).json({
+        error: "Format non autorisé. Formats acceptés : PDF, JPG, PNG, DOC, DOCX.",
+      });
+    }
+
+    const safeEmail = userEmail
+      .toLowerCase()
+      .replace(/[^a-zA-Z0-9@._-]/g, "_");
+
+    const safeFileName = req.file.originalname
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9._-]/g, "_");
+
+    const filePath = `${cleanRole}/${safeEmail}/${Date.now()}-${safeFileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("documents")
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error("Erreur upload Supabase documents:", uploadError);
+      return res.status(500).json({ error: "Erreur upload du document." });
+    }
+
+    const { data, error: insertError } = await supabase
+      .from("documents")
+      .insert([
+        {
+          user_email: userEmail,
+          user_role: cleanRole,
+          name: req.file.originalname,
+          category: category || "Document ajouté",
+          owner: owner || "Vous",
+          status: "Sécurisé",
+          file_path: filePath,
+          mime_type: req.file.mimetype,
+          size_bytes: req.file.size,
+        },
+      ])
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error("Erreur insertion document:", insertError);
+      return res.status(500).json({ error: "Erreur enregistrement document." });
+    }
+
+    return res.json({
+      success: true,
+      document: data,
+    });
+  } catch (error) {
+    console.error("Erreur /api/documents/upload:", error);
+    return res.status(500).json({ error: "Erreur serveur document." });
+  }
+});
+
+app.get("/api/documents", async (req, res) => {
+  try {
+    const userEmail = req.query.userEmail;
+    const userRole = req.query.userRole;
+
+    if (!userEmail) {
+      return res.status(400).json({ error: "Email utilisateur manquant." });
+    }
+
+    let query = supabase
+      .from("documents")
+      .select("*")
+      .eq("user_email", userEmail)
+      .order("created_at", { ascending: false });
+
+    if (userRole) {
+      query = query.eq("user_role", userRole);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Erreur lecture documents:", error);
+      return res.status(500).json({ error: "Erreur lecture documents." });
+    }
+
+    return res.json({
+      success: true,
+      documents: data || [],
+    });
+  } catch (error) {
+    console.error("Erreur /api/documents:", error);
+    return res.status(500).json({ error: "Erreur serveur documents." });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`HAVENA server lancé sur le port ${PORT}`);
