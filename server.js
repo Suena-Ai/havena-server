@@ -4395,15 +4395,20 @@ function extractCjLinksFromResponse(data) {
 
 async function syncCjPartnerPromotions(rulesMap) {
   const cjToken = String(process.env.CJ_API_TOKEN || "").trim();
-
+const cjWebsiteId = String(process.env.CJ_WEBSITE_ID || "").trim();
   if (!cjToken) {
     throw new Error("Variable CJ manquante : CJ_API_TOKEN.");
   }
+if (!cjWebsiteId) {
+  throw new Error("Variable CJ manquante : CJ_WEBSITE_ID.");
+}
 
-  const params = new URLSearchParams();
-  params.append("advertiser-ids", "joined");
-  params.append("records-per-page", "100");
-  params.append("page-number", "1");
+const params = new URLSearchParams();
+params.append("website-id", cjWebsiteId);
+params.append("advertiser-ids", "joined");
+params.append("link-type", "banner");
+params.append("records-per-page", "100");
+params.append("page-number", "1");
 
   const endpoint = `https://link-search.api.cj.com/v2/link-search?${params.toString()}`;
 
