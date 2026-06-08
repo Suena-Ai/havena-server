@@ -3777,6 +3777,737 @@ app.get("/api/offres-emploi/pays/:pays", async (req, res) => {
     });
   }
 });
+/* ===============================
+   PROMOTIONS PARTENAIRES HAVENA
+   Promotions officielles actives
+=============================== */
+
+app.get("/api/partner-promotions/active", async (req, res) => {
+  try {
+    const nowIso = new Date().toISOString();
+
+    const { data: promotions, error: promotionsError } = await supabase
+      .from("partner_promotions")
+      .select("*")
+      .eq("is_active", true)
+      .or(`end_date.is.null,end_date.gte.${nowIso}`)
+      .order("updated_at", { ascending: false });
+
+    if (promotionsError) {
+      console.error("Erreur lecture promotions partenaires :", promotionsError);
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture promotions partenaires.",
+        error: promotionsError.message,
+      });
+    }
+
+    const { data: rules, error: rulesError } = await supabase
+      .from("partner_promotion_rules")
+      .select("*")
+      .eq("is_enabled", true)
+      .eq("promotions_allowed", true)
+      .eq("official_resources_only", true);
+
+    if (rulesError) {
+      console.error("Erreur lecture règles promotions :", rulesError);
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture règles promotions partenaires.",
+        error: rulesError.message,
+      });
+    }
+
+    const rulesByPartnerKey = new Map(
+      (rules || []).map((rule) => [String(rule.partner_key || "").trim(), rule])
+    );
+
+    const safePromotions = (promotions || [])
+      .filter((promotion) => {
+        const partnerKey = String(promotion.partner_key || "").trim();
+        const rule = rulesByPartnerKey.get(partnerKey);
+
+        if (!rule) return false;
+
+        if (promotion.promo_code && !rule.promo_codes_allowed) {
+          return false;
+        }
+
+        return true;
+      })
+      .map((promotion) => ({
+        id: promotion.id,
+        network: promotion.network,
+        partner_name: promotion.partner_name,
+        partner_key: promotion.partner_key,
+        category: promotion.category,
+        title: promotion.title,
+        description: promotion.description,
+        promo_code: promotion.promo_code || "",
+        affiliate_link: promotion.affiliate_link,
+        image_url: promotion.image_url || "",
+        start_date: promotion.start_date,
+        end_date: promotion.end_date,
+      }));
+
+    return res.json({
+      ok: true,
+      total: safePromotions.length,
+      promotions: safePromotions,
+    });
+  } catch (error) {
+    console.error("Erreur serveur /api/partner-promotions/active :", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur promotions partenaires.",
+      error: error.message,
+    });
+  }
+});
+/* ===============================
+   PROMOTIONS PARTENAIRES HAVENA
+   Moteur sécurisé d'enregistrement
+=============================== */
+
+async function getPartnerPromotionRulesMap() {
+  const { data, error } = await supabase
+    .from("partner_promotion_rules")
+    .select("*")
+    .eq("is_enabled", true)
+    .eq("promotions_allowed", true)
+    .eq("official_resources_only", true);
+
+  if (error) {
+    console.error("Erreur lecture règles promotions partenaires :", error);
+    throw new Error("Impossible de lire les règles promotions partenaires.");
+  }
+
+  return new Map(
+    (data || []).map((rule) => [String(rule.partner_key || "").trim(), rule])
+  );
+}
+
+function cleanPromotionText(value = "") {
+  return String(value || "").trim();
+}
+
+function cleanPromotionDate(value) {
+  if (!value) return null;
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+}
+
+async function upsertOfficialPartnerPromotion(promotion, rulesMap) {
+  const network = cleanPromotionText(promotion.network);
+  const partnerKey = cleanPromotionText(promotion.partner_key);
+  const partnerName = cleanPromotionText(promotion.partner_name);
+  const sourceId = cleanPromotionText(promotion.source_id);
+  const title = cleanPromotionText(promotion.title);
+  const affiliateLink = cleanPromotionText(promotion.affiliate_link);
+
+  if (!network || !partnerKey || !partnerName || !sourceId || !title || !affiliateLink) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "Promotion incomplète.",
+    };
+  }
+
+  const rule = rulesMap.get(partnerKey);
+
+  if (!rule) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "Partenaire non autorisé dans partner_promotion_rules.",
+    };
+  }
+
+  let promoCode = cleanPromotionText(promotion.promo_code);
+
+  if (promoCode && !rule.promo_codes_allowed) {
+    promoCode = "";
+  }
+
+  const payload = {
+    network,
+    partner_name: partnerName,
+    partner_key: partnerKey,
+    category: cleanPromotionText(promotion.category || rule.category || ""),
+    title,
+    description: cleanPromotionText(promotion.description),
+    promo_code: promoCode,
+    affiliate_link: affiliateLink,
+    image_url: cleanPromotionText(promotion.image_url),
+    start_date: cleanPromotionDate(promotion.start_date),
+    end_date: cleanPromotionDate(promotion.end_date),
+    source_id: sourceId,
+    source_payload: promotion.source_payload || {},
+    is_active: true,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data: existingPromotion, error: readError } = await supabase
+    .from("partner_promotions")
+    .select("id")
+    .eq("network", network)
+    .eq("source_id", sourceId)
+    .maybeSingle();
+
+  if (readError) {
+    console.error("Erreur recherche promotion existante :", readError);
+    throw new Error("Erreur recherche promotion existante.");
+  }
+
+  if (existingPromotion?.id) {
+    const { data, error } = await supabase
+      .from("partner_promotions")
+      .update(payload)
+      .eq("id", existingPromotion.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Erreur mise à jour promotion partenaire :", error);
+      throw new Error("Erreur mise à jour promotion partenaire.");
+    }
+
+    return {
+      ok: true,
+      action: "updated",
+      promotion: data,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("partner_promotions")
+    .insert([
+      {
+        ...payload,
+        created_at: new Date().toISOString(),
+      },
+    ])
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Erreur insertion promotion partenaire :", error);
+    throw new Error("Erreur insertion promotion partenaire.");
+  }
+
+  return {
+    ok: true,
+    action: "inserted",
+    promotion: data,
+  };
+}
+/* ===============================
+   PROMOTIONS PARTENAIRES HAVENA
+   Connecteur Awin officiel
+=============================== */
+
+function normalizePartnerSearchText(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findRuleForNetworkPartner(rulesMap, network, advertiserName = "") {
+  const cleanNetwork = normalizePartnerSearchText(network);
+  const cleanAdvertiserName = normalizePartnerSearchText(advertiserName);
+
+  if (!cleanAdvertiserName) return null;
+
+  for (const rule of rulesMap.values()) {
+    const ruleNetwork = normalizePartnerSearchText(rule.network);
+    const ruleName = normalizePartnerSearchText(rule.partner_name);
+
+    if (ruleNetwork !== cleanNetwork) continue;
+
+    if (
+      cleanAdvertiserName === ruleName ||
+      cleanAdvertiserName.includes(ruleName) ||
+      ruleName.includes(cleanAdvertiserName)
+    ) {
+      return rule;
+    }
+  }
+
+  return null;
+}
+
+function extractAwinPromotionsFromResponse(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.promotions)) return data.promotions;
+  if (Array.isArray(data?.offers)) return data.offers;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.results)) return data.results;
+  return [];
+}
+
+async function syncAwinPartnerPromotions(rulesMap) {
+  const awinToken = String(process.env.AWIN_API_TOKEN || "").trim();
+  const awinPublisherId = String(process.env.AWIN_PUBLISHER_ID || "").trim();
+
+  if (!awinToken || !awinPublisherId) {
+    throw new Error("Variables Awin manquantes : AWIN_API_TOKEN ou AWIN_PUBLISHER_ID.");
+  }
+
+  const endpoint = `https://api.awin.com/publisher/${encodeURIComponent(
+    awinPublisherId
+  )}/promotions?accessToken=${encodeURIComponent(awinToken)}`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: awinToken,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      filters: {
+        membership: "joined",
+        status: "active",
+        type: "all",
+      },
+      pagination: {
+        page: 1,
+        pageSize: 200,
+      },
+    }),
+  });
+
+  const responseText = await response.text();
+
+  let data = null;
+  try {
+    data = responseText ? JSON.parse(responseText) : null;
+  } catch (error) {
+    data = null;
+  }
+
+  if (!response.ok) {
+    console.error("Erreur API Awin promotions :", response.status, responseText);
+    throw new Error(`Erreur API Awin promotions : ${response.status}`);
+  }
+
+  const awinPromotions = extractAwinPromotionsFromResponse(data);
+
+  const results = {
+    network: "Awin",
+    received: awinPromotions.length,
+    inserted: 0,
+    updated: 0,
+    skipped: 0,
+  };
+
+  for (const awinPromotion of awinPromotions) {
+    const advertiserName = awinPromotion?.advertiser?.name || "";
+    const rule = findRuleForNetworkPartner(rulesMap, "Awin", advertiserName);
+
+    if (!rule) {
+      results.skipped += 1;
+      continue;
+    }
+
+    const promoCode = awinPromotion?.voucher?.code || "";
+
+    const saved = await upsertOfficialPartnerPromotion(
+      {
+        network: "Awin",
+        partner_name: rule.partner_name,
+        partner_key: rule.partner_key,
+        category: rule.category || "",
+        title: awinPromotion?.title || "Offre officielle partenaire",
+        description:
+          awinPromotion?.description ||
+          awinPromotion?.terms ||
+          "Offre officielle disponible via Awin.",
+        promo_code: promoCode,
+        affiliate_link:
+          awinPromotion?.urlTracking ||
+          awinPromotion?.url ||
+          "",
+        image_url: "",
+        start_date: awinPromotion?.startDate || null,
+        end_date: awinPromotion?.endDate || null,
+        source_id:
+          awinPromotion?.promotionId
+            ? String(awinPromotion.promotionId)
+            : `${rule.partner_key}-${awinPromotion?.title || ""}`,
+        source_payload: awinPromotion,
+      },
+      rulesMap
+    );
+
+    if (saved?.action === "inserted") {
+      results.inserted += 1;
+    } else if (saved?.action === "updated") {
+      results.updated += 1;
+    } else {
+      results.skipped += 1;
+    }
+  }
+
+  return results;
+}
+/* ===============================
+   PROMOTIONS PARTENAIRES HAVENA
+   Synchronisation officielle sécurisée
+=============================== */
+
+app.post("/api/partner-promotions/sync", async (req, res) => {
+  try {
+    const syncSecret = String(process.env.PARTNER_PROMOTIONS_SYNC_SECRET || "").trim();
+    const incomingSecret = String(
+      req.headers["x-havena-sync-secret"] || req.body?.syncSecret || ""
+    ).trim();
+
+    if (!syncSecret || incomingSecret !== syncSecret) {
+      return res.status(403).json({
+        ok: false,
+        message: "Accès refusé. Synchronisation non autorisée.",
+      });
+    }
+
+    const rulesMap = await getPartnerPromotionRulesMap();
+
+ const awinResults = await syncAwinPartnerPromotions(rulesMap);
+const cjResults = await syncCjPartnerPromotions(rulesMap);
+const travelpayoutsResults = await syncTravelpayoutsPartnerPromotions(rulesMap);
+
+return res.json({
+  ok: true,
+  message: "Synchronisation promotions partenaires terminée.",
+  results: {
+    awin: awinResults,
+    cj: cjResults,
+    travelpayouts: travelpayoutsResults,
+  },
+});
+  } catch (error) {
+    console.error("Erreur synchronisation promotions partenaires :", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur synchronisation promotions partenaires.",
+      error: error.message,
+    });
+  }
+});
+/* ===============================
+   PROMOTIONS PARTENAIRES HAVENA
+   Connecteur CJ officiel
+=============================== */
+
+function extractCjLinksFromResponse(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.links)) return data.links;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.["link-search"]?.links)) return data["link-search"].links;
+  return [];
+}
+
+async function syncCjPartnerPromotions(rulesMap) {
+  const cjToken = String(process.env.CJ_API_TOKEN || "").trim();
+
+  if (!cjToken) {
+    throw new Error("Variable CJ manquante : CJ_API_TOKEN.");
+  }
+
+  const params = new URLSearchParams();
+  params.append("advertiser-ids", "joined");
+  params.append("records-per-page", "100");
+  params.append("page-number", "1");
+
+  const endpoint = `https://link-search.api.cj.com/v2/link-search?${params.toString()}`;
+
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${cjToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  const responseText = await response.text();
+
+  let data = null;
+  try {
+    data = responseText ? JSON.parse(responseText) : null;
+  } catch (error) {
+    data = null;
+  }
+
+  if (!response.ok) {
+    console.error("Erreur API CJ Link Search :", response.status, responseText);
+    throw new Error(`Erreur API CJ Link Search : ${response.status}`);
+  }
+
+  const cjLinks = extractCjLinksFromResponse(data);
+
+  const results = {
+    network: "CJ",
+    received: cjLinks.length,
+    inserted: 0,
+    updated: 0,
+    skipped: 0,
+  };
+
+  for (const cjLink of cjLinks) {
+    const advertiserName =
+      cjLink?.advertiserName ||
+      cjLink?.advertiser_name ||
+      cjLink?.advertiser ||
+      cjLink?.advertiserNameText ||
+      "";
+
+    const rule = findRuleForNetworkPartner(rulesMap, "CJ", advertiserName);
+
+    if (!rule) {
+      results.skipped += 1;
+      continue;
+    }
+
+    const linkName =
+      cjLink?.linkName ||
+      cjLink?.link_name ||
+      cjLink?.name ||
+      cjLink?.title ||
+      "Offre officielle CJ";
+
+    const destinationUrl =
+      cjLink?.clickUrl ||
+      cjLink?.click_url ||
+      cjLink?.trackingUrl ||
+      cjLink?.tracking_url ||
+      cjLink?.url ||
+      "";
+
+    if (!destinationUrl) {
+      results.skipped += 1;
+      continue;
+    }
+
+    const promotionType =
+      cjLink?.promotionType ||
+      cjLink?.promotion_type ||
+      cjLink?.linkType ||
+      cjLink?.link_type ||
+      "";
+
+    const descriptionParts = [
+      cjLink?.description || "",
+      promotionType ? `Type : ${promotionType}` : "",
+    ].filter(Boolean);
+
+    const saved = await upsertOfficialPartnerPromotion(
+      {
+        network: "CJ",
+        partner_name: rule.partner_name,
+        partner_key: rule.partner_key,
+        category: rule.category || "",
+        title: linkName,
+        description:
+          descriptionParts.join(" - ") ||
+          "Ressource officielle disponible via CJ.",
+        promo_code: "",
+        affiliate_link: destinationUrl,
+        image_url: cjLink?.imageUrl || cjLink?.image_url || "",
+        start_date: cjLink?.startDate || cjLink?.start_date || null,
+        end_date: cjLink?.endDate || cjLink?.end_date || null,
+        source_id:
+          cjLink?.linkId
+            ? String(cjLink.linkId)
+            : cjLink?.link_id
+            ? String(cjLink.link_id)
+            : `${rule.partner_key}-${linkName}`,
+        source_payload: cjLink,
+      },
+      rulesMap
+    );
+
+    if (saved?.action === "inserted") {
+      results.inserted += 1;
+    } else if (saved?.action === "updated") {
+      results.updated += 1;
+    } else {
+      results.skipped += 1;
+    }
+  }
+
+  return results;
+}
+/* ===============================
+   PROMOTIONS PARTENAIRES HAVENA
+   Connecteur Travelpayouts officiel
+=============================== */
+
+function buildTravelpayoutsAffiliateLink(rawUrl = "") {
+  const marker = String(process.env.TRAVELPAYOUTS_MARKER || "").trim();
+  const cleanUrl = String(rawUrl || "").trim();
+
+  if (!marker || !cleanUrl) {
+    return cleanUrl;
+  }
+
+  if (cleanUrl.includes("marker=")) {
+    return cleanUrl;
+  }
+
+  const encodedUrl = encodeURIComponent(cleanUrl);
+
+  return `https://tp.media/r?marker=${encodeURIComponent(
+    marker
+  )}&u=${encodedUrl}`;
+}
+
+function extractTravelpayoutsPromotionsFromResponse(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.promotions)) return data.promotions;
+  if (Array.isArray(data?.offers)) return data.offers;
+  if (Array.isArray(data?.results)) return data.results;
+  return [];
+}
+
+async function syncTravelpayoutsPartnerPromotions(rulesMap) {
+  const travelpayoutsToken = String(process.env.TRAVELPAYOUTS_API_TOKEN || "").trim();
+
+  if (!travelpayoutsToken) {
+    throw new Error("Variable Travelpayouts manquante : TRAVELPAYOUTS_API_TOKEN.");
+  }
+
+  const endpoint = "https://api.travelpayouts.com/promotions";
+
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${travelpayoutsToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  const responseText = await response.text();
+
+  let data = null;
+  try {
+    data = responseText ? JSON.parse(responseText) : null;
+  } catch (error) {
+    data = null;
+  }
+
+  if (!response.ok) {
+    console.error("Erreur API Travelpayouts promotions :", response.status, responseText);
+    throw new Error(`Erreur API Travelpayouts promotions : ${response.status}`);
+  }
+
+  const travelpayoutsPromotions = extractTravelpayoutsPromotionsFromResponse(data);
+
+  const results = {
+    network: "Travelpayouts",
+    received: travelpayoutsPromotions.length,
+    inserted: 0,
+    updated: 0,
+    skipped: 0,
+  };
+
+  for (const travelPromotion of travelpayoutsPromotions) {
+    const partnerName =
+      travelPromotion?.partner_name ||
+      travelPromotion?.partnerName ||
+      travelPromotion?.brand ||
+      travelPromotion?.program ||
+      travelPromotion?.campaign ||
+      "";
+
+    const rule = findRuleForNetworkPartner(
+      rulesMap,
+      "Travelpayouts",
+      partnerName
+    );
+
+    if (!rule) {
+      results.skipped += 1;
+      continue;
+    }
+
+    const rawLink =
+      travelPromotion?.affiliate_link ||
+      travelPromotion?.url ||
+      travelPromotion?.link ||
+      travelPromotion?.target_url ||
+      "";
+
+    const affiliateLink = buildTravelpayoutsAffiliateLink(rawLink);
+
+    if (!affiliateLink) {
+      results.skipped += 1;
+      continue;
+    }
+
+    const saved = await upsertOfficialPartnerPromotion(
+      {
+        network: "Travelpayouts",
+        partner_name: rule.partner_name,
+        partner_key: rule.partner_key,
+        category: rule.category || "",
+        title:
+          travelPromotion?.title ||
+          travelPromotion?.name ||
+          "Offre officielle Travelpayouts",
+        description:
+          travelPromotion?.description ||
+          travelPromotion?.text ||
+          "Ressource officielle disponible via Travelpayouts.",
+        promo_code: "",
+        affiliate_link: affiliateLink,
+        image_url:
+          travelPromotion?.image_url ||
+          travelPromotion?.imageUrl ||
+          travelPromotion?.banner ||
+          "",
+        start_date:
+          travelPromotion?.start_date ||
+          travelPromotion?.startDate ||
+          null,
+        end_date:
+          travelPromotion?.end_date ||
+          travelPromotion?.endDate ||
+          travelPromotion?.expires_at ||
+          null,
+        source_id:
+          travelPromotion?.id
+            ? String(travelPromotion.id)
+            : `${rule.partner_key}-${travelPromotion?.title || travelPromotion?.name || ""}`,
+        source_payload: travelPromotion,
+      },
+      rulesMap
+    );
+
+    if (saved?.action === "inserted") {
+      results.inserted += 1;
+    } else if (saved?.action === "updated") {
+      results.updated += 1;
+    } else {
+      results.skipped += 1;
+    }
+  }
+
+  return results;
+}
 
 const PORT = process.env.PORT || 5055;
 // ===============================
