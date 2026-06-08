@@ -4404,7 +4404,6 @@ if (!cjWebsiteId) {
 }
 
 const params = new URLSearchParams();
-params.append("website-id", cjWebsiteId);
 params.append("advertiser-ids", "joined");
 params.append("records-per-page", "100");
 params.append("page-number", "1");
