@@ -4184,19 +4184,44 @@ app.post("/api/partner-promotions/sync", async (req, res) => {
 
     const rulesMap = await getPartnerPromotionRulesMap();
 
- const awinResults = await syncAwinPartnerPromotions(rulesMap);
-const cjResults = await syncCjPartnerPromotions(rulesMap);
-const travelpayoutsResults = await syncTravelpayoutsPartnerPromotions(rulesMap);
+const results = {};
+
+try {
+  results.awin = await syncAwinPartnerPromotions(rulesMap);
+} catch (error) {
+  console.error("Erreur sync Awin :", error);
+  results.awin = {
+    ok: false,
+    error: error.message,
+  };
+}
+
+try {
+  results.cj = await syncCjPartnerPromotions(rulesMap);
+} catch (error) {
+  console.error("Erreur sync CJ :", error);
+  results.cj = {
+    ok: false,
+    error: error.message,
+  };
+}
+
+try {
+  results.travelpayouts = await syncTravelpayoutsPartnerPromotions(rulesMap);
+} catch (error) {
+  console.error("Erreur sync Travelpayouts :", error);
+  results.travelpayouts = {
+    ok: false,
+    error: error.message,
+  };
+}
 
 return res.json({
   ok: true,
   message: "Synchronisation promotions partenaires terminée.",
-  results: {
-    awin: awinResults,
-    cj: cjResults,
-    travelpayouts: travelpayoutsResults,
-  },
+  results,
 });
+
   } catch (error) {
     console.error("Erreur synchronisation promotions partenaires :", error);
     return res.status(500).json({
