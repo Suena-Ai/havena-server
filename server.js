@@ -4167,6 +4167,40 @@ async function syncAwinPartnerPromotions(rulesMap) {
    PROMOTIONS PARTENAIRES HAVENA
    Synchronisation officielle sécurisée
 =============================== */
+app.get("/api/partner-promotions", async (req, res) => {
+  try {
+    const nowIso = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from("partner_promotions")
+      .select("*")
+      .eq("is_active", true)
+      .or(`end_date.is.null,end_date.gte.${nowIso}`)
+      .order("updated_at", { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error("Erreur lecture promotions partenaires :", error);
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture promotions partenaires.",
+        error: error.message,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      promotions: data || [],
+    });
+  } catch (error) {
+    console.error("Erreur serveur promotions partenaires :", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur promotions partenaires.",
+      error: error.message,
+    });
+  }
+});
 
 app.post("/api/partner-promotions/sync", async (req, res) => {
   try {
