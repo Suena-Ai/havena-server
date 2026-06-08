@@ -4167,6 +4167,64 @@ async function syncAwinPartnerPromotions(rulesMap) {
    PROMOTIONS PARTENAIRES HAVENA
    Synchronisation officielle sécurisée
 =============================== */
+function normalizePromotionText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isRealPartnerPromotion(promo) {
+  const title = normalizePromotionText(promo.title);
+  const description = normalizePromotionText(promo.description);
+  const promoCode = normalizePromotionText(promo.promo_code);
+  const partnerName = normalizePromotionText(promo.partner_name);
+
+  const fullText = `${title} ${description} ${promoCode} ${partnerName}`;
+
+  const hasPromoCode =
+    promoCode &&
+    promoCode !== "empty" &&
+    promoCode !== "null" &&
+    promoCode !== "undefined";
+
+  const hasPercentDiscount = /(^|\D)([1-9][0-9]?|100)\s?%/.test(fullText);
+
+  const hasPromoKeyword =
+    fullText.includes("discount") ||
+    fullText.includes("off") ||
+    fullText.includes("promo") ||
+    fullText.includes("coupon") ||
+    fullText.includes("voucher") ||
+    fullText.includes("deal") ||
+    fullText.includes("sale") ||
+    fullText.includes("savings") ||
+    fullText.includes("rabatt") ||
+    fullText.includes("gutschein") ||
+    fullText.includes("angebot") ||
+    fullText.includes("reduction") ||
+    fullText.includes("remise") ||
+    fullText.includes("promotion") ||
+    fullText.includes("code promo") ||
+    fullText.includes("bon plan") ||
+    fullText.includes("descuento") ||
+    fullText.includes("oferta") ||
+    fullText.includes("sconto") ||
+    fullText.includes("promocao") ||
+    fullText.includes("promocion");
+
+  const isOnlyHotelDescription =
+    title.startsWith("neue hotel") ||
+    title.includes("new hotel") ||
+    title.includes("hotel ") && !hasPercentDiscount && !hasPromoCode && !hasPromoKeyword;
+
+  if (isOnlyHotelDescription) {
+    return false;
+  }
+
+  return Boolean(hasPromoCode || hasPercentDiscount || hasPromoKeyword);
+}
+
 app.get("/api/partner-promotions", async (req, res) => {
   try {
     const nowIso = new Date().toISOString();
@@ -4188,10 +4246,15 @@ app.get("/api/partner-promotions", async (req, res) => {
       });
     }
 
-    return res.json({
-      ok: true,
-      promotions: data || [],
-    });
+  const realPromotions = (data || []).filter(isRealPartnerPromotion);
+
+return res.json({
+  ok: true,
+  promotions: realPromotions,
+  total_received: data?.length || 0,
+  total_displayed: realPromotions.length,
+});
+
   } catch (error) {
     console.error("Erreur serveur promotions partenaires :", error);
     return res.status(500).json({
