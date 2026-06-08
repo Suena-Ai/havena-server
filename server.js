@@ -4429,10 +4429,18 @@ params.append("page-number", "1");
     data = null;
   }
 
-  if (!response.ok) {
-    console.error("Erreur API CJ Link Search :", response.status, responseText);
-    throw new Error(`Erreur API CJ Link Search : ${response.status}`);
-  }
+ if (!response.ok) {
+  console.error("Erreur CJ détaillée :", {
+    status: response.status,
+    statusText: response.statusText,
+    endpoint,
+    responseText,
+  });
+
+  throw new Error(
+    `Erreur API CJ Link Search : ${response.status} ${response.statusText} - ${responseText}`
+  );
+}
 
   const cjLinks = extractCjLinksFromResponse(data);
 
