@@ -4190,40 +4190,88 @@ function isRealPartnerPromotion(promo) {
 
   const hasPercentDiscount = /(^|\D)([1-9][0-9]?|100)\s?%/.test(fullText);
 
-  const hasPromoKeyword =
+  const hasStrongPromoKeyword =
     fullText.includes("discount") ||
     fullText.includes("off") ||
-    fullText.includes("promo") ||
     fullText.includes("coupon") ||
     fullText.includes("voucher") ||
-    fullText.includes("deal") ||
-    fullText.includes("sale") ||
-    fullText.includes("savings") ||
+    fullText.includes("promo code") ||
+    fullText.includes("code promo") ||
     fullText.includes("rabatt") ||
     fullText.includes("gutschein") ||
-    fullText.includes("angebot") ||
     fullText.includes("reduction") ||
     fullText.includes("remise") ||
-    fullText.includes("promotion") ||
-    fullText.includes("code promo") ||
-    fullText.includes("bon plan") ||
     fullText.includes("descuento") ||
-    fullText.includes("oferta") ||
     fullText.includes("sconto") ||
     fullText.includes("promocao") ||
     fullText.includes("promocion");
 
+  const hasClearSpecialOffer =
+    fullText.includes("special offer") ||
+    fullText.includes("offre speciale") ||
+    fullText.includes("offre spéciale") ||
+    fullText.includes("sale") ||
+    fullText.includes("deal");
+
   const isOnlyHotelDescription =
     title.startsWith("neue hotel") ||
     title.includes("new hotel") ||
-    title.includes("hotel ") && !hasPercentDiscount && !hasPromoCode && !hasPromoKeyword;
+    title.includes("nouvel hotel") ||
+    title.includes("nouvel hôtel");
 
-  if (isOnlyHotelDescription) {
+  if (isOnlyHotelDescription && !hasPromoCode && !(hasPercentDiscount && hasStrongPromoKeyword)) {
     return false;
   }
 
-  return Boolean(hasPromoCode || hasPercentDiscount || hasPromoKeyword);
+  if (hasPromoCode) {
+    return true;
+  }
+
+  if (hasPercentDiscount && hasStrongPromoKeyword) {
+    return true;
+  }
+
+  if (hasClearSpecialOffer && hasStrongPromoKeyword) {
+    return true;
+  }
+
+  return false;
 }
+function getPromotionPercentValue(promo) {
+  const fullText = normalizePromotionText(
+    `${promo.title || ""} ${promo.description || ""} ${promo.promo_code || ""}`
+  );
+
+  const match = fullText.match(/(^|\D)([1-9][0-9]?|100)\s?%/);
+  return match ? `${match[2]}%` : "";
+}
+
+function dedupePartnerPromotions(promotions) {
+  const seen = new Set();
+
+  return (promotions || []).filter((promo) => {
+    const partnerName = normalizePromotionText(promo.partner_name);
+    const promoCode = normalizePromotionText(promo.promo_code);
+    const percentValue = getPromotionPercentValue(promo);
+    const category = normalizePromotionText(
+      Array.isArray(promo.categories) ? promo.categories.join(" ") : promo.category
+    );
+
+    const key = [
+      partnerName,
+      promoCode || percentValue || normalizePromotionText(promo.title),
+      category,
+    ].join("|");
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
 
 app.get("/api/partner-promotions", async (req, res) => {
   try {
@@ -4246,7 +4294,9 @@ app.get("/api/partner-promotions", async (req, res) => {
       });
     }
 
-  const realPromotions = (data || []).filter(isRealPartnerPromotion);
+const realPromotions = dedupePartnerPromotions(
+  (data || []).filter(isRealPartnerPromotion)
+);
 
 return res.json({
   ok: true,
@@ -4254,6 +4304,7 @@ return res.json({
   total_received: data?.length || 0,
   total_displayed: realPromotions.length,
 });
+
 
   } catch (error) {
     console.error("Erreur serveur promotions partenaires :", error);
