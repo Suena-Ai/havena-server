@@ -4124,6 +4124,13 @@ async function syncAwinPartnerPromotions(rulesMap) {
   awinPromotion?.program ||
   awinPromotion?.name ||
   "Awin";
+  const promoTitle =
+  awinPromotion?.title ||
+  awinPromotion?.promotion_title ||
+  awinPromotion?.promotionTitle ||
+  awinPromotion?.name ||
+  awinPromotion?.description ||
+  "Promotion Awin officielle";
     const advertiserName = awinPromotion?.advertiser?.name || "";
     const rule = findRuleForNetworkPartner(rulesMap, "Awin", advertiserName);
 
