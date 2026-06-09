@@ -4149,7 +4149,8 @@ async function syncAwinPartnerPromotions(rulesMap) {
   awinPromotion?.link ||
   awinPromotion?.deeplink ||
   "";
-    const advertiserName = awinPromotion?.advertiser?.name || "";
+    const advertiserName = partnerName;
+
     const rule = findRuleForNetworkPartner(rulesMap, "Awin", advertiserName);
 
     if (!rule) {
@@ -4159,7 +4160,7 @@ async function syncAwinPartnerPromotions(rulesMap) {
 
     const promoCode = awinPromotion?.voucher?.code || "";
 
-    const promoKey = `travelpayouts-${normalizePromotionText(partnerName)}-${normalizePromotionText(
+    const promoKey = `Awin-${normalizePromotionText(partnerName)}-${normalizePromotionText(
   promoCode || promoTitle
 )}`;
 
