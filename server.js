@@ -4151,13 +4151,11 @@ async function syncAwinPartnerPromotions(rulesMap) {
   "";
     const advertiserName = partnerName;
 
-    const rule = findRuleForNetworkPartner(rulesMap, "Awin", advertiserName);
-
-    if (!rule) {
-      results.skipped += 1;
-      continue;
-    }
-
+   const rule =
+  findRuleForNetworkPartner(rulesMap, "Awin", advertiserName) || {
+    category: "voyage",
+    categories: ["voyage", "partenaire", "awin"],
+  };
     const promoCode = awinPromotion?.voucher?.code || "";
 
     const promoKey = `Awin-${normalizePromotionText(partnerName)}-${normalizePromotionText(
