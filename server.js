@@ -4270,12 +4270,19 @@ function isRealPartnerPromotion(promo) {
     fullText.includes("promocao") ||
     fullText.includes("promocion");
 
-  const hasClearSpecialOffer =
-    fullText.includes("special offer") ||
-    fullText.includes("offre speciale") ||
-    fullText.includes("offre spéciale") ||
-    fullText.includes("sale") ||
-    fullText.includes("deal");
+ const hasClearSpecialOffer =
+  fullText.includes("special offer") ||
+  fullText.includes("special offers") ||
+  fullText.includes("offre speciale") ||
+  fullText.includes("offres speciales") ||
+  fullText.includes("offre exclusive") ||
+  fullText.includes("offres exclusives") ||
+  fullText.includes("duree limitee") ||
+  fullText.includes("durée limitée") ||
+  fullText.includes("tarifs exceptionnels") ||
+  fullText.includes("meilleur prix") ||
+  fullText.includes("sale") ||
+  fullText.includes("deal");
 
   const isOnlyHotelDescription =
     title.startsWith("neue hotel") ||
@@ -4295,9 +4302,9 @@ function isRealPartnerPromotion(promo) {
     return true;
   }
 
-  if (hasClearSpecialOffer && hasStrongPromoKeyword) {
-    return true;
-  }
+ if (hasClearSpecialOffer) {
+  return true;
+}
 
   return false;
 }
