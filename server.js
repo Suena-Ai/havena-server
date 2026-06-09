@@ -4124,41 +4124,62 @@ async function syncAwinPartnerPromotions(rulesMap) {
 
     const promoCode = awinPromotion?.voucher?.code || "";
 
-    const saved = await upsertOfficialPartnerPromotion(
-      {
-        network: "Awin",
-        partner_name: rule.partner_name,
-        partner_key: rule.partner_key,
-        category: rule.category || "",
-        title: awinPromotion?.title || "Offre officielle partenaire",
-        description:
-          awinPromotion?.description ||
-          awinPromotion?.terms ||
-          "Offre officielle disponible via Awin.",
-        promo_code: promoCode,
-        affiliate_link:
-          awinPromotion?.urlTracking ||
-          awinPromotion?.url ||
-          "",
-        image_url: "",
-        start_date: awinPromotion?.startDate || null,
-        end_date: awinPromotion?.endDate || null,
-        source_id:
-          awinPromotion?.promotionId
-            ? String(awinPromotion.promotionId)
-            : `${rule.partner_key}-${awinPromotion?.title || ""}`,
-        source_payload: awinPromotion,
-      },
-      rulesMap
-    );
+    const promoKey = `travelpayouts-${normalizePromotionText(partnerName)}-${normalizePromotionText(
+  promoCode || promoTitle
+)}`;
 
-    if (saved?.action === "inserted") {
-      results.inserted += 1;
-    } else if (saved?.action === "updated") {
-      results.updated += 1;
-    } else {
-      results.skipped += 1;
-    }
+const payload = {
+  promo_key: promoKey,
+  source: "Travelpayouts",
+  partner_name: partnerName,
+  title: promoTitle,
+  description: promoDescription,
+  promo_code: promoCode,
+  affiliate_link: affiliateLink,
+  image_url: travelPromotion.image_url || "",
+  categories: travelPromotion.categories || ["voyage"],
+  source_payload: travelPromotion,
+  is_active: true,
+  updated_at: new Date().toISOString(),
+};
+
+const { data: existingPromotion, error: findError } = await supabase
+  .from("partner_promotions")
+  .select("id")
+  .eq("promo_key", promoKey)
+  .maybeSingle();
+
+if (findError) {
+  results.skipped += 1;
+  continue;
+}
+
+if (existingPromotion?.id) {
+  const { error: updateError } = await supabase
+    .from("partner_promotions")
+    .update(payload)
+    .eq("id", existingPromotion.id);
+
+  if (updateError) {
+    results.skipped += 1;
+  } else {
+    results.updated += 1;
+  }
+} else {
+  const { error: insertError } = await supabase
+    .from("partner_promotions")
+    .insert({
+      ...payload,
+      created_at: new Date().toISOString(),
+    });
+
+  if (insertError) {
+    results.skipped += 1;
+  } else {
+    results.inserted += 1;
+  }
+}
+
   }
 
   return results;
