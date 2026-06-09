@@ -4110,136 +4110,123 @@ async function syncAwinPartnerPromotions(rulesMap) {
     received: awinPromotions.length,
     inserted: 0,
     updated: 0,
-    skipped: [],
+    skipped: 0,
   };
 
   for (const awinPromotion of awinPromotions) {
-    const partnerName =
-  awinPromotion?.advertiser_name ||
-  awinPromotion?.advertiserName ||
-  awinPromotion?.advertiser?.name ||
-  awinPromotion?.merchant_name ||
-  awinPromotion?.merchantName ||
-  awinPromotion?.brand ||
-  awinPromotion?.program ||
-  awinPromotion?.name ||
-  "Awin";
-  const promoTitle =
-  awinPromotion?.title ||
-  awinPromotion?.promotion_title ||
-  awinPromotion?.promotionTitle ||
-  awinPromotion?.name ||
-  awinPromotion?.description ||
-  "Promotion Awin officielle";
-  const promoDescription =
-  awinPromotion?.description ||
-  awinPromotion?.summary ||
-  awinPromotion?.details ||
-  awinPromotion?.terms ||
-  promoTitle ||
-  "";
-  const affiliateLink =
-  awinPromotion?.url ||
-  awinPromotion?.tracking_url ||
-  awinPromotion?.trackingUrl ||
-  awinPromotion?.affiliate_url ||
-  awinPromotion?.affiliateUrl ||
-  awinPromotion?.click_url ||
-  awinPromotion?.clickUrl ||
-  awinPromotion?.link ||
-  awinPromotion?.deeplink ||
-  "";
-    const advertiserName = partnerName;
+    const advertiserName =
+      awinPromotion?.advertiser?.name ||
+      awinPromotion?.advertiser_name ||
+      awinPromotion?.advertiserName ||
+      awinPromotion?.merchant_name ||
+      awinPromotion?.merchantName ||
+      awinPromotion?.brand ||
+      awinPromotion?.program ||
+      awinPromotion?.programName ||
+      awinPromotion?.name ||
+      "";
 
-   const rule =
-  findRuleForNetworkPartner(rulesMap, "Awin", advertiserName) || {
-    category: "voyage",
-    categories: ["voyage", "partenaire", "awin"],
-  };
-    const promoCode = awinPromotion?.voucher?.code || "";
+    const rule = findRuleForNetworkPartner(rulesMap, "Awin", advertiserName);
 
-    const promoKey = `Awin-${normalizePromotionText(partnerName)}-${normalizePromotionText(
-  promoCode || promoTitle
-)}`;
+    if (!rule) {
+      results.skipped += 1;
+      continue;
+    }
 
-const payload = {
-  promo_key: promoKey,
-  source: "Awin",
-  partner_name: partnerName,
-  title: promoTitle,
-  description: promoDescription,
-  promo_code: promoCode,
-  affiliate_link: affiliateLink,
- image_url: awinPromotion.image_url || awinPromotion.imageUrl || awinPromotion.advertiser?.logoUrl || "",
-categories: awinPromotion.categories || ["voyage"],
-source_payload: awinPromotion,
+    const promoTitle =
+      awinPromotion?.title ||
+      awinPromotion?.promotion_title ||
+      awinPromotion?.promotionTitle ||
+      awinPromotion?.name ||
+      awinPromotion?.description ||
+      "Promotion officielle Awin";
 
-  is_active: true,
-  updated_at: new Date().toISOString(),
-};
+    const promoDescription =
+      awinPromotion?.description ||
+      awinPromotion?.summary ||
+      awinPromotion?.details ||
+      awinPromotion?.terms ||
+      promoTitle ||
+      "Ressource officielle disponible via Awin.";
 
-const { data: existingPromotion, error: findError } = await supabase
-  .from("partner_promotions")
-  .select("id")
-  .eq("promo_key", promoKey)
-  .maybeSingle();
+    const promoCode =
+      awinPromotion?.voucher?.code ||
+      awinPromotion?.voucherCode ||
+      awinPromotion?.promo_code ||
+      awinPromotion?.promoCode ||
+      awinPromotion?.code ||
+      "";
 
-if (findError) {
-  results.skipped += 1;
-  results.errors.push({
-    step: "find",
-    message: findError.message,
-    details: findError.details || "",
-    hint: findError.hint || "",
-    promoKey,
-  });
-  continue;
-}
+    const affiliateLink =
+      awinPromotion?.url ||
+      awinPromotion?.tracking_url ||
+      awinPromotion?.trackingUrl ||
+      awinPromotion?.urlTracking ||
+      awinPromotion?.trackingLink ||
+      awinPromotion?.affiliate_url ||
+      awinPromotion?.affiliateUrl ||
+      awinPromotion?.click_url ||
+      awinPromotion?.clickUrl ||
+      awinPromotion?.link ||
+      awinPromotion?.deeplink ||
+      "";
 
-if (existingPromotion?.id) {
-  const { error: updateError } = await supabase
-    .from("partner_promotions")
-    .update(payload)
-    .eq("id", existingPromotion.id);
+    if (!affiliateLink) {
+      results.skipped += 1;
+      continue;
+    }
 
- if (updateError) {
-  results.skipped += 1;
-  results.errors.push({
-    step: "update",
-    message: updateError.message,
-    details: updateError.details || "",
-    hint: updateError.hint || "",
-    promoKey,
-  });
-} else {
-  results.updated += 1;
-}
-} else {
-  const { error: insertError } = await supabase
-    .from("partner_promotions")
-    .insert({
-      ...payload,
-      created_at: new Date().toISOString(),
-    });
+    const sourceId =
+      awinPromotion?.id ||
+      awinPromotion?.promotionId ||
+      awinPromotion?.promotion_id ||
+      awinPromotion?.offerId ||
+      awinPromotion?.offer_id ||
+      `${rule.partner_key}-${promoTitle}-${promoCode || affiliateLink}`;
 
-if (insertError) {
-  results.skipped += 1;
-  results.errors.push({
-    step: "insert",
-    message: insertError.message,
-    details: insertError.details || "",
-    hint: insertError.hint || "",
-    promoKey,
-  });
-} else {
-  results.inserted += 1;
-}
-}
+    const saved = await upsertOfficialPartnerPromotion(
+      {
+        network: "Awin",
+        partner_name: rule.partner_name,
+        partner_key: rule.partner_key,
+        category: rule.category || "",
+        title: promoTitle,
+        description: promoDescription,
+        promo_code: promoCode,
+        affiliate_link: affiliateLink,
+        image_url:
+          awinPromotion?.image_url ||
+          awinPromotion?.imageUrl ||
+          awinPromotion?.advertiser?.logoUrl ||
+          "",
+        start_date:
+          awinPromotion?.startDate ||
+          awinPromotion?.start_date ||
+          awinPromotion?.startsAt ||
+          null,
+        end_date:
+          awinPromotion?.endDate ||
+          awinPromotion?.end_date ||
+          awinPromotion?.endsAt ||
+          null,
+        source_id: String(sourceId),
+        source_payload: awinPromotion,
+      },
+      rulesMap
+    );
 
+    if (saved?.action === "inserted") {
+      results.inserted += 1;
+    } else if (saved?.action === "updated") {
+      results.updated += 1;
+    } else {
+      results.skipped += 1;
+    }
   }
 
   return results;
 }
+
 /* ===============================
    PROMOTIONS PARTENAIRES HAVENA
    Synchronisation officielle sécurisée
@@ -4684,72 +4671,88 @@ async function syncTravelpayoutsPartnerPromotions(rulesMap) {
   if (!travelpayoutsToken) {
     throw new Error("Variable Travelpayouts manquante : TRAVELPAYOUTS_API_TOKEN.");
   }
-const officialTravelpayoutsPromotions = [
-  {
-    partner_name: "Klook",
-    title: "Code promo Klook officiel",
-    description: "Code promo Travelpayouts officiel fourni pour Klook.",
-    promo_code: "TPKLOOKTA5",
-    affiliate_link: "https://klook.tpx.lt/92J1Use4",
-    image_url: "",
-    categories: ["activites", "experiences", "voyage"],
-    source_payload: {
-      origin: "official_travelpayouts_promotion",
-      verified_by_admin: true,
-      note: "Promotion officielle Travelpayouts validée pour HAVENA.",
-    },
-  },
-];
 
-const results = {
-  network: "Travelpayouts",
-  received: officialTravelpayoutsPromotions.length,
-  inserted: 0,
-  updated: 0,
-  skipped: 0,
-};
-
-for (const travelPromotion of officialTravelpayoutsPromotions) {
-  const partnerName = travelPromotion.partner_name || "";
-  const promoTitle = travelPromotion.title || "";
-  const promoDescription = travelPromotion.description || "";
-  const promoCode = travelPromotion.promo_code || "";
-  const affiliateLink = travelPromotion.affiliate_link || "";
-
-  const saved = await savePartnerPromotion(
+  const officialTravelpayoutsPromotions = [
     {
-      source: "Travelpayouts",
-      partner_key: `travelpayouts-${normalizePromotionText(partnerName)}-${normalizePromotionText(
-        promoCode || promoTitle
-      )}`,
-      partner_name: partnerName,
-      title: promoTitle,
-      description: promoDescription,
-      promo_code: promoCode,
-      affiliate_link: affiliateLink,
-      image_url: travelPromotion.image_url || "",
-      categories: travelPromotion.categories || ["voyage"],
-      source_payload: travelPromotion,
+      partner_name: "Klook",
+      title: "Code promo Klook officiel",
+      description: "Code promo Travelpayouts officiel fourni pour Klook.",
+      promo_code: "TPKLOOKTA5",
+      affiliate_link: "https://klook.tpx.lt/92J1Use4",
+      image_url: "",
+      category: "activites",
+      source_payload: {
+        origin: "official_travelpayouts_promotion",
+        verified_by_admin: true,
+        note: "Promotion officielle Travelpayouts validée pour HAVENA.",
+      },
     },
-    rulesMap
-  );
+  ];
 
-  if (saved?.action === "inserted") {
-    results.inserted += 1;
-  } else if (saved?.action === "updated") {
-    results.updated += 1;
-  } else {
-    results.skipped += 1;
+  const results = {
+    network: "Travelpayouts",
+    received: officialTravelpayoutsPromotions.length,
+    inserted: 0,
+    updated: 0,
+    skipped: 0,
+  };
+
+  for (const travelPromotion of officialTravelpayoutsPromotions) {
+    const partnerName = travelPromotion.partner_name || "";
+    const rule = findRuleForNetworkPartner(rulesMap, "Travelpayouts", partnerName);
+
+    if (!rule) {
+      results.skipped += 1;
+      continue;
+    }
+
+    const promoTitle = travelPromotion.title || "Promotion officielle Travelpayouts";
+    const promoDescription =
+      travelPromotion.description || "Ressource officielle disponible via Travelpayouts.";
+    const promoCode = travelPromotion.promo_code || "";
+    const affiliateLink = travelPromotion.affiliate_link || "";
+
+    if (!affiliateLink) {
+      results.skipped += 1;
+      continue;
+    }
+
+    const sourceId = `${rule.partner_key}-${promoCode || promoTitle}`;
+
+    const saved = await upsertOfficialPartnerPromotion(
+      {
+        network: "Travelpayouts",
+        partner_name: rule.partner_name,
+        partner_key: rule.partner_key,
+        category: rule.category || travelPromotion.category || "voyage",
+        title: promoTitle,
+        description: promoDescription,
+        promo_code: promoCode,
+        affiliate_link: affiliateLink,
+        image_url: travelPromotion.image_url || "",
+        start_date: null,
+        end_date: null,
+        source_id: String(sourceId),
+        source_payload: travelPromotion,
+      },
+      rulesMap
+    );
+
+    if (saved?.action === "inserted") {
+      results.inserted += 1;
+    } else if (saved?.action === "updated") {
+      results.updated += 1;
+    } else {
+      results.skipped += 1;
+    }
   }
+
+  return {
+    ok: true,
+    ...results,
+  };
 }
 
-return {
-  ok: true,
-  ...results,
-};
-
-
-}
 
 const PORT = process.env.PORT || 5055;
 // ===============================
