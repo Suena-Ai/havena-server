@@ -4494,11 +4494,14 @@ if (!cjWebsiteId) {
   throw new Error("Variable CJ manquante : CJ_WEBSITE_ID.");
 }
 
-const params = new URLSearchParams();
-params.append("website-id", cjWebsiteId);
-params.append("advertiser-ids", "joined");
-params.append("records-per-page", "100");
-params.append("page-number", "1");
+const cjLinks = [];
+
+for (let pageNumber = 1; pageNumber <= 10; pageNumber += 1) {
+  const params = new URLSearchParams();
+  params.append("website-id", cjWebsiteId);
+  params.append("advertiser-ids", "joined");
+  params.append("records-per-page", "100");
+  params.append("page-number", String(pageNumber));
 
   const endpoint = `https://link-search.api.cj.com/v2/link-search?${params.toString()}`;
 
@@ -4519,24 +4522,36 @@ params.append("page-number", "1");
     data = null;
   }
 
- if (!response.ok) {
-  console.error("Erreur CJ détaillée :", {
-    status: response.status,
-    statusText: response.statusText,
-    endpoint,
-    responseText,
-  });
+  if (!response.ok) {
+    console.error("Erreur CJ détaillée :", {
+      status: response.status,
+      statusText: response.statusText,
+      endpoint,
+      responseText,
+      pageNumber,
+    });
+    throw new Error(
+      `Erreur API CJ Link Search : ${response.status} ${response.statusText} - ${responseText}`
+    );
+  }
 
-  throw new Error(
-    `Erreur API CJ Link Search : ${response.status} ${response.statusText} - ${responseText}`
-  );
+  const pageLinksFromXml = extractCjLinksFromXml(responseText);
+  const pageLinks =
+    pageLinksFromXml.length > 0
+      ? pageLinksFromXml
+      : extractCjLinksFromResponse(data);
+
+  if (!pageLinks.length) {
+    break;
+  }
+
+  cjLinks.push(...pageLinks);
+
+  if (pageLinks.length < 100) {
+    break;
+  }
 }
 
-const cjLinksFromXml = extractCjLinksFromXml(responseText);
-const cjLinks =
-  cjLinksFromXml.length > 0
-    ? cjLinksFromXml
-    : extractCjLinksFromResponse(data);
 
 
   const results = {
