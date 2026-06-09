@@ -4607,8 +4607,16 @@ async function syncTravelpayoutsPartnerPromotions(rulesMap) {
   if (!travelpayoutsToken) {
     throw new Error("Variable Travelpayouts manquante : TRAVELPAYOUTS_API_TOKEN.");
   }
-
-  const endpoint = "https://api.travelpayouts.com/promotions";
+return {
+  ok: true,
+  network: "Travelpayouts",
+  received: 0,
+  inserted: 0,
+  updated: 0,
+  skipped: 0,
+  message: "Aucune API promotions globale Travelpayouts officielle configurée pour le moment.",
+};
+ const endpoint = "";
 
   const response = await fetch(endpoint, {
     method: "GET",
