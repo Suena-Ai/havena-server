@@ -4138,6 +4138,17 @@ async function syncAwinPartnerPromotions(rulesMap) {
   awinPromotion?.terms ||
   promoTitle ||
   "";
+  const affiliateLink =
+  awinPromotion?.url ||
+  awinPromotion?.tracking_url ||
+  awinPromotion?.trackingUrl ||
+  awinPromotion?.affiliate_url ||
+  awinPromotion?.affiliateUrl ||
+  awinPromotion?.click_url ||
+  awinPromotion?.clickUrl ||
+  awinPromotion?.link ||
+  awinPromotion?.deeplink ||
+  "";
     const advertiserName = awinPromotion?.advertiser?.name || "";
     const rule = findRuleForNetworkPartner(rulesMap, "Awin", advertiserName);
 
