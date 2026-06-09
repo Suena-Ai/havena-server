@@ -4280,6 +4280,7 @@ function isRealPartnerPromotion(promo) {
   fullText.includes("duree limitee") ||
   fullText.includes("durée limitée") ||
   fullText.includes("tarifs exceptionnels") ||
+  fullText.includes("offre valable") ||
   fullText.includes("meilleur prix") ||
   fullText.includes("sale") ||
   fullText.includes("deal");
@@ -4626,7 +4627,10 @@ for (let pageNumber = 1; pageNumber <= 10; pageNumber += 1) {
         description:
           descriptionParts.join(" - ") ||
           "Ressource officielle disponible via CJ.",
-        promo_code: "",
+       promo_code:
+  cjLink?.couponCode ||
+  cjLink?.coupon_code ||
+  "",
         affiliate_link: destinationUrl,
         image_url: cjLink?.imageUrl || cjLink?.image_url || "",
         start_date: cjLink?.startDate || cjLink?.start_date || null,
