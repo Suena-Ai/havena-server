@@ -4414,7 +4414,7 @@ params.append("page-number", "1");
     method: "GET",
     headers: {
       Authorization: `Bearer ${cjToken}`,
-      Accept: "application/json",
+      Accept: "application/xml",
     },
   });
 
