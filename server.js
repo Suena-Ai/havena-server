@@ -4347,7 +4347,7 @@ app.get("/api/partner-promotions", async (req, res) => {
       .eq("is_active", true)
       .or(`end_date.is.null,end_date.gte.${nowIso}`)
       .order("updated_at", { ascending: false })
-      .limit(50);
+      .limit(200);
 
     if (error) {
       console.error("Erreur lecture promotions partenaires :", error);
