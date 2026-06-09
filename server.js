@@ -4392,7 +4392,34 @@ function extractCjLinksFromResponse(data) {
   if (Array.isArray(data?.["link-search"]?.links)) return data["link-search"].links;
   return [];
 }
+function getXmlValue(xml, tagName) {
+  const match = xml.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i"));
+  return match ? match[1].replace(/<!\\[CDATA\\[|\\]\\]>/g, "").trim() : "";
+}
 
+function extractCjLinksFromXml(xml) {
+  if (!xml || typeof xml !== "string") {
+    return [];
+  }
+
+  const linkBlocks = xml.match(/<link>[\s\S]*?<\/link>/gi) || [];
+
+
+  return linkBlocks.map((block) => ({
+    advertiserName: getXmlValue(block, "advertiser-name"),
+    advertiserId: getXmlValue(block, "advertiser-id"),
+    category: getXmlValue(block, "category"),
+    linkName: getXmlValue(block, "link-name"),
+    description: getXmlValue(block, "description"),
+    linkType: getXmlValue(block, "link-type"),
+    promotionType: getXmlValue(block, "promotion-type"),
+    promotionStartDate: getXmlValue(block, "promotion-start-date"),
+    promotionEndDate: getXmlValue(block, "promotion-end-date"),
+    couponCode: getXmlValue(block, "coupon-code"),
+    clickUrl: getXmlValue(block, "clickUrl"),
+    destination: getXmlValue(block, "destination"),
+  }));
+}
 async function syncCjPartnerPromotions(rulesMap) {
   const cjToken = String(process.env.CJ_API_TOKEN || "").trim();
 const cjWebsiteId = String(process.env.CJ_WEBSITE_ID || "").trim();
@@ -4441,7 +4468,12 @@ params.append("page-number", "1");
   );
 }
 
-  const cjLinks = extractCjLinksFromResponse(data);
+const cjLinksFromXml = extractCjLinksFromXml(responseText);
+const cjLinks =
+  cjLinksFromXml.length > 0
+    ? cjLinksFromXml
+    : extractCjLinksFromResponse(data);
+
 
   const results = {
     network: "CJ",
@@ -4560,6 +4592,7 @@ function buildTravelpayoutsAffiliateLink(rawUrl = "") {
 }
 
 function extractTravelpayoutsPromotionsFromResponse(data) {
+  
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.data)) return data.data;
   if (Array.isArray(data?.promotions)) return data.promotions;
