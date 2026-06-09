@@ -4114,6 +4114,16 @@ async function syncAwinPartnerPromotions(rulesMap) {
   };
 
   for (const awinPromotion of awinPromotions) {
+    const partnerName =
+  awinPromotion?.advertiser_name ||
+  awinPromotion?.advertiserName ||
+  awinPromotion?.advertiser?.name ||
+  awinPromotion?.merchant_name ||
+  awinPromotion?.merchantName ||
+  awinPromotion?.brand ||
+  awinPromotion?.program ||
+  awinPromotion?.name ||
+  "Awin";
     const advertiserName = awinPromotion?.advertiser?.name || "";
     const rule = findRuleForNetworkPartner(rulesMap, "Awin", advertiserName);
 
