@@ -4165,15 +4165,16 @@ async function syncAwinPartnerPromotions(rulesMap) {
 
 const payload = {
   promo_key: promoKey,
-  source: "Travelpayouts",
+  source: "Awin",
   partner_name: partnerName,
   title: promoTitle,
   description: promoDescription,
   promo_code: promoCode,
   affiliate_link: affiliateLink,
-  image_url: travelPromotion.image_url || "",
-  categories: travelPromotion.categories || ["voyage"],
-  source_payload: travelPromotion,
+ image_url: awinPromotion.image_url || awinPromotion.imageUrl || awinPromotion.advertiser?.logoUrl || "",
+categories: awinPromotion.categories || ["voyage"],
+source_payload: awinPromotion,
+
   is_active: true,
   updated_at: new Date().toISOString(),
 };
