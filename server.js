@@ -4607,132 +4607,102 @@ async function syncTravelpayoutsPartnerPromotions(rulesMap) {
   if (!travelpayoutsToken) {
     throw new Error("Variable Travelpayouts manquante : TRAVELPAYOUTS_API_TOKEN.");
   }
+const officialTravelpayoutsPromotions = [
+  {
+    partner_name: "Klook",
+    title: "Code promo Klook officiel",
+    description: "Code promo Travelpayouts officiel fourni pour Klook.",
+    promo_code: "TPKLOOKTA5",
+    affiliate_link: "https://klook.tpx.lt/92J1Use4",
+    image_url: "",
+    categories: ["activites", "experiences", "voyage"],
+    source: "Travelpayouts",
+    is_active: true,
+    source_payload: {
+      origin: "official_travelpayouts_promotion",
+      verified_by_admin: true,
+      note: "Promotion officielle Travelpayouts validée pour HAVENA.",
+    },
+  },
+];
+
+const activePromotions = officialTravelpayoutsPromotions.filter((promo) =>
+  isRealPartnerPromotion(promo)
+);
+
+let inserted = 0;
+let updated = 0;
+let skipped = 0;
+
+for (const promo of activePromotions) {
+  const promoKey = [
+    "travelpayouts",
+    normalizePromotionText(promo.partner_name),
+    normalizePromotionText(promo.promo_code || promo.title),
+  ].join("|");
+
+  const { data: existingPromotion, error: findError } = await supabaseAdmin
+    .from("partner_promotions")
+    .select("id")
+    .eq("promo_key", promoKey)
+    .maybeSingle();
+
+  if (findError) {
+    skipped += 1;
+    continue;
+  }
+
+  const payload = {
+    promo_key: promoKey,
+    source: "Travelpayouts",
+    partner_name: promo.partner_name,
+    title: promo.title,
+    description: promo.description,
+    promo_code: promo.promo_code,
+    affiliate_link: promo.affiliate_link,
+    image_url: promo.image_url,
+    categories: promo.categories,
+    source_payload: promo.source_payload,
+    is_active: true,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existingPromotion?.id) {
+    const { error: updateError } = await supabaseAdmin
+      .from("partner_promotions")
+      .update(payload)
+      .eq("id", existingPromotion.id);
+
+    if (updateError) {
+      skipped += 1;
+    } else {
+      updated += 1;
+    }
+  } else {
+    const { error: insertError } = await supabaseAdmin
+      .from("partner_promotions")
+      .insert({
+        ...payload,
+        created_at: new Date().toISOString(),
+      });
+
+    if (insertError) {
+      skipped += 1;
+    } else {
+      inserted += 1;
+    }
+  }
+}
+
 return {
   ok: true,
   network: "Travelpayouts",
-  received: 0,
-  inserted: 0,
-  updated: 0,
-  skipped: 0,
-  message: "Aucune API promotions globale Travelpayouts officielle configurée pour le moment.",
+  received: officialTravelpayoutsPromotions.length,
+  inserted,
+  updated,
+  skipped,
 };
- const endpoint = "";
 
-  const response = await fetch(endpoint, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${travelpayoutsToken}`,
-      Accept: "application/json",
-    },
-  });
-
-  const responseText = await response.text();
-
-  let data = null;
-  try {
-    data = responseText ? JSON.parse(responseText) : null;
-  } catch (error) {
-    data = null;
-  }
-
-  if (!response.ok) {
-    console.error("Erreur API Travelpayouts promotions :", response.status, responseText);
-    throw new Error(`Erreur API Travelpayouts promotions : ${response.status}`);
-  }
-
-  const travelpayoutsPromotions = extractTravelpayoutsPromotionsFromResponse(data);
-
-  const results = {
-    network: "Travelpayouts",
-    received: travelpayoutsPromotions.length,
-    inserted: 0,
-    updated: 0,
-    skipped: 0,
-  };
-
-  for (const travelPromotion of travelpayoutsPromotions) {
-    const partnerName =
-      travelPromotion?.partner_name ||
-      travelPromotion?.partnerName ||
-      travelPromotion?.brand ||
-      travelPromotion?.program ||
-      travelPromotion?.campaign ||
-      "";
-
-    const rule = findRuleForNetworkPartner(
-      rulesMap,
-      "Travelpayouts",
-      partnerName
-    );
-
-    if (!rule) {
-      results.skipped += 1;
-      continue;
-    }
-
-    const rawLink =
-      travelPromotion?.affiliate_link ||
-      travelPromotion?.url ||
-      travelPromotion?.link ||
-      travelPromotion?.target_url ||
-      "";
-
-    const affiliateLink = buildTravelpayoutsAffiliateLink(rawLink);
-
-    if (!affiliateLink) {
-      results.skipped += 1;
-      continue;
-    }
-
-    const saved = await upsertOfficialPartnerPromotion(
-      {
-        network: "Travelpayouts",
-        partner_name: rule.partner_name,
-        partner_key: rule.partner_key,
-        category: rule.category || "",
-        title:
-          travelPromotion?.title ||
-          travelPromotion?.name ||
-          "Offre officielle Travelpayouts",
-        description:
-          travelPromotion?.description ||
-          travelPromotion?.text ||
-          "Ressource officielle disponible via Travelpayouts.",
-        promo_code: "",
-        affiliate_link: affiliateLink,
-        image_url:
-          travelPromotion?.image_url ||
-          travelPromotion?.imageUrl ||
-          travelPromotion?.banner ||
-          "",
-        start_date:
-          travelPromotion?.start_date ||
-          travelPromotion?.startDate ||
-          null,
-        end_date:
-          travelPromotion?.end_date ||
-          travelPromotion?.endDate ||
-          travelPromotion?.expires_at ||
-          null,
-        source_id:
-          travelPromotion?.id
-            ? String(travelPromotion.id)
-            : `${rule.partner_key}-${travelPromotion?.title || travelPromotion?.name || ""}`,
-        source_payload: travelPromotion,
-      },
-      rulesMap
-    );
-
-    if (saved?.action === "inserted") {
-      results.inserted += 1;
-    } else if (saved?.action === "updated") {
-      results.updated += 1;
-    } else {
-      results.skipped += 1;
-    }
-  }
-
-  return results;
 }
 
 const PORT = process.env.PORT || 5055;
