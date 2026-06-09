@@ -4110,7 +4110,7 @@ async function syncAwinPartnerPromotions(rulesMap) {
     received: awinPromotions.length,
     inserted: 0,
     updated: 0,
-    skipped: 0,
+    skipped: [],
   };
 
   for (const awinPromotion of awinPromotions) {
@@ -4186,6 +4186,13 @@ const { data: existingPromotion, error: findError } = await supabase
 
 if (findError) {
   results.skipped += 1;
+  results.errors.push({
+    step: "find",
+    message: findError.message,
+    details: findError.details || "",
+    hint: findError.hint || "",
+    promoKey,
+  });
   continue;
 }
 
@@ -4195,11 +4202,18 @@ if (existingPromotion?.id) {
     .update(payload)
     .eq("id", existingPromotion.id);
 
-  if (updateError) {
-    results.skipped += 1;
-  } else {
-    results.updated += 1;
-  }
+ if (updateError) {
+  results.skipped += 1;
+  results.errors.push({
+    step: "update",
+    message: updateError.message,
+    details: updateError.details || "",
+    hint: updateError.hint || "",
+    promoKey,
+  });
+} else {
+  results.updated += 1;
+}
 } else {
   const { error: insertError } = await supabase
     .from("partner_promotions")
@@ -4208,11 +4222,18 @@ if (existingPromotion?.id) {
       created_at: new Date().toISOString(),
     });
 
-  if (insertError) {
-    results.skipped += 1;
-  } else {
-    results.inserted += 1;
-  }
+if (insertError) {
+  results.skipped += 1;
+  results.errors.push({
+    step: "insert",
+    message: insertError.message,
+    details: insertError.details || "",
+    hint: insertError.hint || "",
+    promoKey,
+  });
+} else {
+  results.inserted += 1;
+}
 }
 
   }
