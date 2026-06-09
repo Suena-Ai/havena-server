@@ -4239,76 +4239,206 @@ function normalizePromotionText(value) {
 }
 
 function isRealPartnerPromotion(promo) {
-  const title = normalizePromotionText(promo.title);
-  const description = normalizePromotionText(promo.description);
-  const promoCode = normalizePromotionText(promo.promo_code);
-  const partnerName = normalizePromotionText(promo.partner_name);
+  const title = String(promo?.title || "");
+  const description = String(promo?.description || "");
+  const promoCode = String(promo?.promo_code || "");
 
-  const fullText = `${title} ${description} ${promoCode} ${partnerName}`;
+  const sourcePayload =
+    typeof promo?.source_payload === "string"
+      ? promo.source_payload
+      : JSON.stringify(promo?.source_payload || {});
 
-  const hasPromoCode =
-    promoCode &&
-    promoCode !== "empty" &&
-    promoCode !== "null" &&
-    promoCode !== "undefined";
+  const rawText = `${title} ${description} ${promoCode} ${sourcePayload}`;
 
-  const hasPercentDiscount = /(^|\D)([1-9][0-9]?|100)\s?%/.test(fullText);
+  const fullText = rawText
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
-  const hasStrongPromoKeyword =
-    fullText.includes("discount") ||
-    fullText.includes("off") ||
-    fullText.includes("coupon") ||
-    fullText.includes("voucher") ||
-    fullText.includes("promo code") ||
-    fullText.includes("code promo") ||
-    fullText.includes("rabatt") ||
-    fullText.includes("gutschein") ||
-    fullText.includes("reduction") ||
-    fullText.includes("remise") ||
-    fullText.includes("descuento") ||
-    fullText.includes("sconto") ||
-    fullText.includes("promocao") ||
-    fullText.includes("promocion");
+  const sourcePayloadObject =
+    promo?.source_payload && typeof promo.source_payload === "object"
+      ? promo.source_payload
+      : {};
 
- const hasClearSpecialOffer =
-  fullText.includes("special offer") ||
-  fullText.includes("special offers") ||
-  fullText.includes("offre speciale") ||
-  fullText.includes("offres speciales") ||
-  fullText.includes("offre exclusive") ||
-  fullText.includes("offres exclusives") ||
-  fullText.includes("duree limitee") ||
-  fullText.includes("durée limitée") ||
-  fullText.includes("tarifs exceptionnels") ||
-  fullText.includes("offre valable") ||
-  fullText.includes("meilleur prix") ||
-  fullText.includes("sale") ||
-  fullText.includes("deal");
+  const promotionType = String(
+    sourcePayloadObject?.promotionType ||
+      sourcePayloadObject?.type ||
+      ""
+  )
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
-  const isOnlyHotelDescription =
-    title.startsWith("neue hotel") ||
-    title.includes("new hotel") ||
-    title.includes("nouvel hotel") ||
-    title.includes("nouvel hôtel");
+  const hasPromoCode = promoCode.trim().length > 0;
 
-  if (isOnlyHotelDescription && !hasPromoCode && !(hasPercentDiscount && hasStrongPromoKeyword)) {
-    return false;
-  }
+  const hasOfficialPromoType =
+    promotionType.includes("coupon") ||
+    promotionType.includes("voucher") ||
+    promotionType.includes("sale") ||
+    promotionType.includes("sale link") ||
+    promotionType.includes("discount") ||
+    promotionType.includes("promotion") ||
+    promotionType.includes("promo");
+
+  const hasPercentDiscount = /\b\d{1,3}\s?%/.test(fullText);
+
+  const hasMoneyDiscount =
+    /(\$|€|£|usd|eur|gbp|cad|aud|chf|¥|￥|円|r\$)\s?\d+/i.test(rawText) ||
+    /\d+\s?(\$|€|£|usd|eur|gbp|cad|aud|chf|¥|￥|円|r\$)/i.test(rawText);
+
+  const worldwidePromoKeywords = [
+    // Français
+    "offre", "offres", "offre speciale", "offres speciales", "offre exclusive",
+    "offres exclusives", "promotion", "promo", "code promo", "remise",
+    "reduction", "rabais", "bon plan", "soldes",
+
+    // Anglais
+    "special offer", "special offers", "sale", "sale link", "deal", "deals",
+    "discount", "coupon", "voucher", "promo code", "save", "savings", "off",
+    "cashback", "limited time", "valid until", "expires",
+
+    // Espagnol
+    "oferta", "ofertas", "descuento", "promocion", "promociones",
+    "codigo promocional", "cupon", "hasta el", "valido hasta", "rebaja",
+    "rebajas", "ahorra", "ahorro",
+
+    // Italien
+    "offerta", "offerte", "sconto", "promozione", "codice promo",
+    "coupon", "fino al", "risparmia", "saldi",
+
+    // Portugais
+    "oferta", "ofertas", "desconto", "promocao", "promocoes",
+    "cupom", "codigo promocional", "ate", "economize",
+
+    // Allemand
+    "rabatt", "gutschein", "angebot", "angebote", "aktion",
+    "sonderangebot", "ersparnis", "sparen", "bis zum",
+
+    // Néerlandais
+    "korting", "aanbieding", "aanbiedingen", "coupon", "actie",
+    "bespaar", "geldig tot",
+
+    // Polonais
+    "rabat", "znizka", "zniżka", "kupon", "promocja", "oferta",
+    "wazne do", "ważne do",
+
+    // Turc
+    "indirim", "kupon", "promosyon", "kampanya", "firsat", "fırsat",
+
+    // Russe / Ukrainien
+    "скидка", "акция", "купон", "промокод", "предложение",
+    "знижка", "акція", "купон", "промокод",
+
+    // Arabe
+    "خصم", "عرض", "عروض", "قسيمة", "كوبون", "رمز ترويجي", "تخفيض",
+
+    // Chinois
+    "优惠", "折扣", "促销", "优惠券", "特价", "满减", "限时",
+
+    // Japonais
+    "割引", "クーポン", "セール", "キャンペーン", "特典", "期間限定",
+
+    // Coréen
+    "할인", "쿠폰", "프로모션", "특가", "이벤트",
+
+    // Thaï / Vietnamien / Indonésien
+    "ส่วนลด", "คูปอง", "โปรโมชั่น",
+    "giảm giá", "mã giảm giá", "khuyến mãi",
+    "diskon", "kode promo", "promo", "penawaran"
+  ];
+
+  const hasWorldwidePromoKeyword = worldwidePromoKeywords.some((keyword) =>
+    fullText.includes(
+      keyword
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+    )
+  );
+
+  const dateLimitKeywords = [
+    "valid until", "expires", "expire", "until", "limited time",
+    "jusqu", "valable jusqu", "offre valable",
+    "hasta el", "valido hasta",
+    "fino al", "valida fino",
+    "bis zum", "gilt bis",
+    "geldig tot",
+    "wazne do", "ważne do",
+    "期限", "有效期", "限时",
+    "期間限定",
+    "لغاية", "حتى"
+  ];
+
+  const hasDateLimit = dateLimitKeywords.some((keyword) =>
+    fullText.includes(
+      keyword
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+    )
+  );
+
+  const travelOfferContextKeywords = [
+    "book", "booking", "flight", "flights", "hotel", "hotels", "car rental",
+    "travel", "trip", "stay", "destination",
+    "reserve", "reservation", "vol", "vols", "hotel", "sejour", "séjour",
+    "location", "vacances", "voyage",
+    "vuela", "destino", "viaje", "reserva", "alojamiento",
+    "flug", "reise", "hotel", "mietwagen",
+    "volo", "viaggio", "soggiorno",
+    "voo", "viagem", "estadia",
+    "航空", "酒店", "旅行", "予約",
+    "항공", "호텔", "여행",
+    "رحلة", "فندق", "سفر"
+  ];
+
+  const hasTravelOfferContext = travelOfferContextKeywords.some((keyword) =>
+    fullText.includes(
+      keyword
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+    )
+  );
+
+  const simpleResourceKeywords = [
+    "homepage", "home page", "home ",
+    "logo", "generic", "test",
+    "banner_", "new logo",
+    "car rental homepage"
+  ];
+
+  const looksLikeSimpleResource = simpleResourceKeywords.some((keyword) =>
+    fullText.includes(keyword)
+  );
 
   if (hasPromoCode) {
     return true;
   }
 
-  if (hasPercentDiscount && hasStrongPromoKeyword) {
+  if (hasOfficialPromoType) {
     return true;
   }
 
- if (hasClearSpecialOffer) {
-  return true;
-}
+  if (hasPercentDiscount) {
+    return true;
+  }
+
+  if (hasMoneyDiscount && hasWorldwidePromoKeyword) {
+    return true;
+  }
+
+  if (hasWorldwidePromoKeyword && !looksLikeSimpleResource) {
+    return true;
+  }
+
+  if (hasDateLimit && hasTravelOfferContext) {
+    return true;
+  }
 
   return false;
 }
+
 function getPromotionPercentValue(promo) {
   const fullText = normalizePromotionText(
     `${promo.title || ""} ${promo.description || ""} ${promo.promo_code || ""}`
