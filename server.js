@@ -4804,19 +4804,34 @@ for (let pageNumber = 1; pageNumber <= 10; pageNumber += 1) {
       continue;
     }
 if (shouldSkipGenericCjPromotion(cjLink)) {
-      console.log("Promotion CJ générique ignorée :", {
+      const skippedLinkName =
+        cjLink?.linkName ||
+        cjLink?.link_name ||
+        cjLink?.name ||
+        cjLink?.description ||
+        "";
+
+      console.log("Promotion CJ générique ignorée et désactivée :", {
         advertiserName,
-        linkName:
-          cjLink?.linkName ||
-          cjLink?.link_name ||
-          cjLink?.name ||
-          cjLink?.description ||
-          "",
+        linkName: skippedLinkName,
       });
+
+      if (skippedLinkName) {
+        await supabase
+          .from("partner_promotions")
+          .update({
+            is_active: false,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("network", "CJ")
+          .eq("partner_key", rule.partner_key)
+          .eq("title", skippedLinkName);
+      }
 
       results.skipped += 1;
       continue;
     }
+
 
     const linkName =
       cjLink?.linkName ||
