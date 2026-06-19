@@ -4622,6 +4622,95 @@ function extractCjLinksFromXml(xml) {
     destination: getXmlValue(block, "destination"),
   }));
 }
+function shouldSkipGenericCjPromotion(link) {
+  const title = String(
+    link?.linkName ||
+    link?.name ||
+    link?.title ||
+    ""
+  ).toLowerCase();
+
+  const description = String(link?.description || "").toLowerCase();
+  const promotionType = String(link?.promotionType || "").toLowerCase();
+  const destination = String(link?.destination || "").toLowerCase();
+  const clickUrl = String(link?.clickUrl || "").toLowerCase();
+
+  const text = `${title} ${description} ${promotionType} ${destination} ${clickUrl}`;
+
+  const genericTerms = [
+    "generic",
+    "home",
+    "homepage",
+    "banner",
+    "logo",
+    "text link",
+    "leaderboard",
+    "skyscraper",
+    "728x90",
+    "300x600",
+    "300x250",
+    "160x600",
+    "468x60",
+    "125x125",
+    "120x600",
+    "970x90",
+    "320x50",
+  ];
+
+  const realOfferTerms = [
+    "offer",
+    "offers",
+    "special",
+    "deal",
+    "deals",
+    "discount",
+    "sale",
+    "saving",
+    "savings",
+    "save",
+    "promo",
+    "promotion",
+    "coupon",
+    "voucher",
+    "summer",
+    "holiday",
+    "vacation",
+    "flight",
+    "hotel",
+    "car rental",
+    "cruise",
+    "offre",
+    "offres",
+    "spécial",
+    "special",
+    "réduction",
+    "reduction",
+    "remise",
+    "vacances",
+    "vol",
+    "hôtel",
+    "hotel",
+  ];
+
+  const hasGenericTerm = genericTerms.some((term) => text.includes(term));
+  const hasRealOfferTerm = realOfferTerms.some((term) => text.includes(term));
+  const hasBannerSize = /\b\d{2,4}x\d{2,4}\b/.test(text);
+
+  if (title.includes("generic")) {
+    return true;
+  }
+
+  if (hasBannerSize && !hasRealOfferTerm) {
+    return true;
+  }
+
+  if (hasGenericTerm && !hasRealOfferTerm) {
+    return true;
+  }
+
+  return false;
+}
+
 async function syncCjPartnerPromotions(rulesMap) {
   const cjToken = String(process.env.CJ_API_TOKEN || "").trim();
 const cjWebsiteId = String(process.env.CJ_WEBSITE_ID || "").trim();
@@ -4711,6 +4800,20 @@ for (let pageNumber = 1; pageNumber <= 10; pageNumber += 1) {
     const rule = findRuleForNetworkPartner(rulesMap, "CJ", advertiserName);
 
     if (!rule) {
+      results.skipped += 1;
+      continue;
+    }
+if (shouldSkipGenericCjPromotion(cjLink)) {
+      console.log("Promotion CJ générique ignorée :", {
+        advertiserName,
+        linkName:
+          cjLink?.linkName ||
+          cjLink?.link_name ||
+          cjLink?.name ||
+          cjLink?.description ||
+          "",
+      });
+
       results.skipped += 1;
       continue;
     }
