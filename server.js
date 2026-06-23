@@ -502,6 +502,8 @@ app.post("/api/auth/register", async (req, res) => {
       email,
       password,
       role,
+      accept_promotions,
+      accept_promotions_at,
       poste_recherche,
       mois_disponible,
       periode_disponible,
@@ -629,6 +631,12 @@ app.post("/api/auth/register", async (req, res) => {
       role: normalizedRole,
       email_confirmed: false,
       created_at: new Date().toISOString(),
+      accept_promotions: Boolean(accept_promotions),
+accept_promotions_at: accept_promotions
+  ? accept_promotions_at || new Date().toISOString()
+  : null,
+unsubscribed_promotions_at: null,
+
       ...(normalizedRole === "saisonnier" || normalizedRole === "etudiant"
         ? {
             poste_recherche: poste_recherche || null,
@@ -712,6 +720,69 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+app.post("/api/auth/promotions-consent", async (req, res) => {
+  try {
+    const { email, accept_promotions } = req.body;
+
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        ok: false,
+        message: "Email obligatoire",
+      });
+    }
+
+    const acceptPromotions = accept_promotions === true;
+
+    const updates = acceptPromotions
+      ? {
+          accept_promotions: true,
+          accept_promotions_at: new Date().toISOString(),
+          unsubscribed_promotions_at: null,
+        }
+      : {
+          accept_promotions: false,
+          accept_promotions_at: null,
+          unsubscribed_promotions_at: new Date().toISOString(),
+        };
+
+    const { data, error } = await supabase
+      .from("havena_users")
+      .update(updates)
+      .eq("email", normalizedEmail)
+      .select(
+        "id, email, role, accept_promotions, accept_promotions_at, unsubscribed_promotions_at"
+      )
+      .maybeSingle();
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur mise à jour consentement promotions",
+        error: error.message,
+      });
+    }
+
+    if (!data) {
+      return res.status(404).json({
+        ok: false,
+        message: "Utilisateur introuvable",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      user: data,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur consentement promotions",
+      error: error.message,
+    });
+  }
+});
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password, role } = req.body;
@@ -728,18 +799,20 @@ app.post("/api/auth/login", async (req, res) => {
 
     const { data: user, error } = await supabase
       .from("havena_users")
-      .select(
-        `
-        id,
-        email,
-        password,
-        role,
-        first_name,
-        last_name,
-        email_confirmed,
-        stripe_account_id
-      `
-      )
+     .select(`
+  id,
+  email,
+  password,
+  role,
+  first_name,
+  last_name,
+  email_confirmed,
+  stripe_account_id,
+  accept_promotions,
+  accept_promotions_at,
+  unsubscribed_promotions_at
+`)
+
       .eq("email", normalizedEmail)
       .maybeSingle();
 
@@ -810,6 +883,9 @@ app.post("/api/auth/login", async (req, res) => {
         first_name: user.first_name,
         last_name: user.last_name,
         email_confirmed: user.email_confirmed,
+        accept_promotions: user.accept_promotions,
+accept_promotions_at: user.accept_promotions_at,
+unsubscribed_promotions_at: user.unsubscribed_promotions_at,
         stripe_account_id: user.stripe_account_id || "",
       },
     });
