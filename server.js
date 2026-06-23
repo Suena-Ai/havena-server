@@ -783,6 +783,137 @@ app.post("/api/auth/promotions-consent", async (req, res) => {
     });
   }
 });
+
+app.post("/api/partner-promotions/send-daily-emails", async (req, res) => {
+  try {
+    const secret =
+      req.headers["x-havena-sync-secret"] ||
+      req.headers["x-sync-secret"] ||
+      req.query.secret;
+
+    if (process.env.HAVENA_SYNC_SECRET && secret !== process.env.HAVENA_SYNC_SECRET) {
+      return res.status(401).json({
+        ok: false,
+        message: "Accès refusé",
+      });
+    }
+
+    const promotionsUrl = `${FRONTEND_URL}/#promotions-partenaires`;
+
+    const { data: promotions, error: promotionsError } = await supabase
+      .from("partner_promotions")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(8);
+
+    if (promotionsError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture promotions",
+        error: promotionsError.message,
+      });
+    }
+
+    const activePromotions = (promotions || []).filter((promo) => {
+      return promo.is_active !== false && promo.active !== false;
+    });
+
+    if (activePromotions.length === 0) {
+      return res.json({
+        ok: true,
+        message: "Aucune promotion active, aucun email envoyé.",
+        sent: 0,
+      });
+    }
+
+    const { data: users, error: usersError } = await supabase
+      .from("havena_users")
+      .select("id, email, first_name, role, accept_promotions, unsubscribed_promotions_at")
+      .eq("accept_promotions", true)
+      .is("unsubscribed_promotions_at", null);
+
+    if (usersError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture utilisateurs",
+        error: usersError.message,
+      });
+    }
+
+    const acceptedUsers = (users || []).filter((user) => Boolean(user.email));
+
+    if (acceptedUsers.length === 0) {
+      return res.json({
+        ok: true,
+        message: "Aucun utilisateur inscrit aux promotions.",
+        sent: 0,
+      });
+    }
+
+    const promotionLines = activePromotions
+      .map((promo) => {
+        const partnerName =
+          promo.partner_name ||
+          promo.name ||
+          promo.title ||
+          "Partenaire HAVENA";
+
+        const promoTitle =
+          promo.title ||
+          promo.name ||
+          promo.description ||
+          "Offre spéciale officielle";
+
+        return `• ${partnerName} — ${promoTitle}`;
+      })
+      .join("\n");
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const user of acceptedUsers) {
+      try {
+        await transporter.sendMail({
+          from: process.env.MAIL_USER,
+          to: user.email,
+          subject: "Nouvelles promotions HAVENA disponibles",
+          text:
+            `Bonjour${user.first_name ? " " + user.first_name : ""},\n\n` +
+            `De nouvelles promotions HAVENA sont disponibles aujourd’hui.\n\n` +
+            `${promotionLines}\n\n` +
+            `Pour découvrir les offres, cliquez ici :\n` +
+            `${promotionsUrl}\n\n` +
+            `HAVENA ne transmet pas vos coordonnées personnelles à ses partenaires.\n` +
+            `Les offres partenaires vous sont présentées par HAVENA.\n\n` +
+            `Si une offre vous intéresse, vous pourrez cliquer depuis HAVENA sur le bouton partenaire affilié.\n\n` +
+            `HAVENA`,
+        });
+
+        sent += 1;
+      } catch (mailError) {
+        failed += 1;
+        console.error("Erreur envoi email promotion HAVENA :", mailError);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      message: "Emails promotions HAVENA envoyés.",
+      promotions: activePromotions.length,
+      users: acceptedUsers.length,
+      sent,
+      failed,
+    });
+  } catch (error) {
+    console.error("Erreur route emails promotions HAVENA :", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur emails promotions HAVENA",
+      error: error.message,
+    });
+  }
+});
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password, role } = req.body;
