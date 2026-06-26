@@ -529,8 +529,16 @@ app.post("/api/auth/register", async (req, res) => {
 
     const normalizedEmail = normalizeEmail(email);
     const normalizedRole = String(role).trim().toLowerCase();
+console.log("ROLE REÇU :", role);
+console.log("ROLE NORMALISÉ :", normalizedRole);
 
-    const allowedRoles = ["saisonnier", "etudiant", "employeur", "hebergeur"];
+  const allowedRoles = [
+  "saisonnier",
+  "etudiant",
+  "vacancier",
+  "employeur",
+  "hebergeur"
+];
 
     if (!allowedRoles.includes(normalizedRole)) {
       return res.status(400).json({
