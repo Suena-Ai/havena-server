@@ -30,6 +30,68 @@ function unixToIso(value) {
   if (!value) return null;
   return new Date(Number(value) * 1000).toISOString();
 }
+function parseHavenaDate(value) {
+  if (!value) return null;
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  date.setHours(12, 0, 0, 0);
+  return date;
+}
+
+function calculateNights(dateDebut, dateFin) {
+  const start = parseHavenaDate(dateDebut);
+  const end = parseHavenaDate(dateFin);
+
+  if (!start || !end) {
+    return 0;
+  }
+
+  const diffMs = end.getTime() - start.getTime();
+  const nights = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  return nights > 0 ? nights : 0;
+}
+
+function toMoneyNumber(value) {
+  if (value === null || value === undefined) return 0;
+
+  const cleaned = String(value)
+    .replace(",", ".")
+    .replace(/[^\d.]/g, "");
+
+  const number = Number(cleaned);
+
+  return Number.isFinite(number) ? number : 0;
+}
+
+function calculateReservationAmounts({
+  prixParNuit,
+  acomptePourcentage,
+  dateDebut,
+  dateFin,
+}) {
+  const nuits = calculateNights(dateDebut, dateFin);
+  const prixNuit = toMoneyNumber(prixParNuit);
+  const pourcentage = toMoneyNumber(acomptePourcentage || 20);
+
+  const total = Math.round(nuits * prixNuit * 100) / 100;
+  const acompte = Math.round((total * pourcentage) / 100 * 100) / 100;
+  const solde = Math.round((total - acompte) * 100) / 100;
+
+  return {
+    nuits,
+    prix_par_nuit: prixNuit,
+    acompte_pourcentage: pourcentage,
+    montant_total: total,
+    acompte,
+    solde_restant: solde,
+  };
+}
 
 function containsForbiddenContactInfo(text = "") {
   const value = String(text || "").toLowerCase().trim();
@@ -351,85 +413,173 @@ app.post(
           return res.json({ received: true });
         }
 
-        if (reservationId) {
-          await supabase
-            .from("reservations")
-            .update({
-              payment_status: "paid",
-              statut: "confirmée",
-            })
-            .eq("id", reservationId);
+     if (reservationId) {
+  const { data: reservationBefore } = await supabase
+    .from("reservations")
+    .select("*")
+    .eq("id", reservationId)
+    .maybeSingle();
 
-          const { data: reservation } = await supabase
-            .from("reservations")
-            .select("*")
-            .eq("id", reservationId)
-            .single();
+  if (
+    reservationBefore?.payment_status === "paid" &&
+    reservationBefore?.confirmation_envoyee_client &&
+    reservationBefore?.confirmation_envoyee_hebergeur
+  ) {
+    return res.json({ received: true });
+  }
 
-          let logement = null;
+  await supabase
+    .from("reservations")
+    .update({
+      payment_status: "paid",
+      statut: "confirmée",
+    })
+    .eq("id", reservationId);
 
-          if (logementId) {
-            const { data: logementData } = await supabase
-              .from("logements")
-              .select("*")
-              .eq("id", logementId)
-              .single();
+  const { data: reservation } = await supabase
+    .from("reservations")
+    .select("*")
+    .eq("id", reservationId)
+    .single();
 
-            logement = logementData || null;
-          }
+  let logement = null;
 
-          if (reservation?.email) {
-            try {
-              await transporter.sendMail({
-                from: process.env.MAIL_USER,
-                to: reservation.email,
-                subject: "Paiement confirmé - Réservation HAVENA",
-                text:
-                  `Bonjour ${reservation.prenom || ""},\n\n` +
-                  `Votre paiement a bien été confirmé.\n` +
-                  `Logement : ${logement?.titre || "Logement réservé"}\n` +
-                  `Ville : ${reservation.ville || logement?.ville || ""}\n` +
-                  `Type : ${reservation.type || logement?.type || ""}\n` +
-                  `Dates : ${reservation.dates || ""}\n` +
-                  `Acompte payé : ${reservation.acompte || ""}\n\n` +
-                  `Merci,\nHAVENA`,
-              });
+  if (logementId) {
+    const { data: logementData } = await supabase
+      .from("logements")
+      .select("*")
+      .eq("id", logementId)
+      .single();
 
-              await supabase
-                .from("reservations")
-                .update({ confirmation_envoyee_client: true })
-                .eq("id", reservationId);
-            } catch (mailError) {
-              console.error("Erreur mail confirmation client :", mailError);
-            }
-          }
+    logement = logementData || null;
+  }
 
-          if (logement?.hebergeur_email) {
-            try {
-              await transporter.sendMail({
-                from: process.env.MAIL_USER,
-                to: logement.hebergeur_email,
-                subject: "Nouvelle réservation confirmée - HAVENA",
-                text:
-                  `Bonjour ${logement.hebergeur_nom || "Hébergeur"},\n\n` +
-                  `Une réservation a été confirmée pour votre logement.\n` +
-                  `Logement : ${logement.titre || ""}\n` +
-                  `Client : ${reservation?.prenom || ""} ${reservation?.nom || ""}\n` +
-                  `Email client : ${reservation?.email || ""}\n` +
-                  `Dates : ${reservation?.dates || ""}\n` +
-                  `Acompte payé : ${reservation?.acompte || ""}\n\n` +
-                  `HAVENA`,
-              });
+  const datesText = String(reservation?.dates || "");
+  const dateParts = datesText
+    .split(/au|à|-|→/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
 
-              await supabase
-                .from("reservations")
-                .update({ confirmation_envoyee_hebergeur: true })
-                .eq("id", reservationId);
-            } catch (mailError) {
-              console.error("Erreur mail confirmation hébergeur :", mailError);
-            }
-          }
-        }
+  const dateDebut = dateParts[0] || "";
+  const dateFin = dateParts[1] || "";
+
+  const calcul =
+    logement && dateDebut && dateFin
+      ? calculateReservationAmounts({
+          prixParNuit: logement.prix_par_nuit,
+          acomptePourcentage: logement.acompte_pourcentage || 20,
+          dateDebut,
+          dateFin,
+        })
+      : null;
+
+  const montantTotal =
+    calcul?.montant_total || toMoneyNumber(reservation?.montant);
+
+  const acomptePaye =
+    calcul?.acompte || toMoneyNumber(reservation?.acompte);
+
+  const soldeRestant = Math.max(
+    0,
+    Math.round((montantTotal - acomptePaye) * 100) / 100
+  );
+
+  const nombreNuits = calcul?.nuits || "";
+
+  if (logementId && dateDebut && dateFin) {
+    const { data: existingBlocage } = await supabase
+      .from("logement_disponibilites")
+      .select("id")
+      .eq("logement_id", logementId)
+      .eq("date_debut", dateDebut)
+      .eq("date_fin", dateFin)
+      .limit(1);
+
+    if (!existingBlocage || existingBlocage.length === 0) {
+      await supabase.from("logement_disponibilites").insert([
+        {
+          logement_id: logementId,
+          hebergeur_email: logement?.hebergeur_email || "",
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          statut: "reserve",
+          type_periode: "reservation",
+          note: `Réservation confirmée HAVENA #${reservationId} - acompte payé`,
+        },
+      ]);
+    }
+  }
+
+  const recuClient =
+    `Bonjour ${reservation?.prenom || ""},\n\n` +
+    `Votre acompte a bien été payé et votre réservation HAVENA est confirmée.\n\n` +
+    `Récapitulatif de réservation :\n` +
+    `Logement : ${logement?.titre || "Logement réservé"}\n` +
+    `Ville : ${reservation?.ville || logement?.ville || ""}\n` +
+    `Type : ${reservation?.type || logement?.type || ""}\n` +
+    `Dates : ${reservation?.dates || ""}\n` +
+    `${nombreNuits ? `Nombre de nuits : ${nombreNuits}\n` : ""}` +
+    `Prix total du séjour : ${montantTotal} €\n` +
+    `Acompte payé : ${acomptePaye} €\n` +
+    `Solde restant : ${soldeRestant} €\n\n` +
+    `Ce message vaut reçu de paiement de l’acompte.\n\n` +
+    `Merci,\nHAVENA`;
+
+  const recuHebergeur =
+    `Bonjour ${logement?.hebergeur_nom || "Hébergeur"},\n\n` +
+    `Une réservation a été confirmée pour votre logement sur HAVENA.\n\n` +
+    `Récapitulatif de réservation :\n` +
+    `Logement : ${logement?.titre || ""}\n` +
+    `Ville : ${reservation?.ville || logement?.ville || ""}\n` +
+    `Type : ${reservation?.type || logement?.type || ""}\n` +
+    `Dates : ${reservation?.dates || ""}\n` +
+    `${nombreNuits ? `Nombre de nuits : ${nombreNuits}\n` : ""}` +
+    `Prix total du séjour : ${montantTotal} €\n` +
+    `Acompte payé : ${acomptePaye} €\n` +
+    `Solde restant : ${soldeRestant} €\n\n` +
+    `Client : ${reservation?.prenom || ""} ${reservation?.nom || ""}\n` +
+    `Email client : ${reservation?.email || ""}\n` +
+    `Téléphone client : ${reservation?.telephone || ""}\n\n` +
+    `La période a été bloquée automatiquement dans HAVENA.\n\n` +
+    `HAVENA`;
+
+  if (reservation?.email) {
+    try {
+      await transporter.sendMail({
+        from: process.env.MAIL_USER,
+        to: reservation.email,
+        subject: "Acompte payé - Réservation HAVENA confirmée",
+        text: recuClient,
+      });
+
+      await supabase
+        .from("reservations")
+        .update({ confirmation_envoyee_client: true })
+        .eq("id", reservationId);
+    } catch (mailError) {
+      console.error("Erreur mail reçu client :", mailError);
+    }
+  }
+
+  if (logement?.hebergeur_email) {
+    try {
+      await transporter.sendMail({
+        from: process.env.MAIL_USER,
+        to: logement.hebergeur_email,
+        subject: "Nouvelle réservation confirmée - Acompte payé",
+        text: recuHebergeur,
+      });
+
+      await supabase
+        .from("reservations")
+        .update({ confirmation_envoyee_hebergeur: true })
+        .eq("id", reservationId);
+    } catch (mailError) {
+      console.error("Erreur mail reçu hébergeur :", mailError);
+    }
+  }
+}
+
       }
 
       if (
@@ -1573,21 +1723,33 @@ app.get("/api/stripe/connect/status", async (req, res) => {
 
 app.post("/api/stripe/create-checkout-session", async (req, res) => {
   try {
-    const { montant, prenom, nom, email, reservationId, logementId } = req.body;
+    const { reservationId, logementId } = req.body;
 
-    if (!montant || !prenom || !nom || !email || !reservationId || !logementId) {
+    if (!reservationId || !logementId) {
       return res.status(400).json({
         ok: false,
-        message: "Données Stripe manquantes",
+        message: "Données Stripe manquantes : réservation et logement.",
       });
     }
 
-    const montantNumber = Number(String(montant).replace(/[^\d]/g, ""));
+    const { data: reservation, error: reservationError } = await supabase
+      .from("reservations")
+      .select("*")
+      .eq("id", reservationId)
+      .maybeSingle();
 
-    if (!montantNumber || montantNumber <= 0) {
-      return res.status(400).json({
+    if (reservationError) {
+      return res.status(500).json({
         ok: false,
-        message: "Montant invalide",
+        message: "Erreur lecture réservation.",
+        error: reservationError.message,
+      });
+    }
+
+    if (!reservation) {
+      return res.status(404).json({
+        ok: false,
+        message: "Réservation introuvable.",
       });
     }
 
@@ -1595,12 +1757,20 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
       .from("logements")
       .select("*")
       .eq("id", Number(logementId))
-      .single();
+      .maybeSingle();
 
-    if (logementError || !logement) {
+    if (logementError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture logement.",
+        error: logementError.message,
+      });
+    }
+
+    if (!logement) {
       return res.status(404).json({
         ok: false,
-        message: "Logement introuvable",
+        message: "Logement introuvable.",
       });
     }
 
@@ -1611,22 +1781,39 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
       });
     }
 
-    const unitAmount = montantNumber * 100;
+    // Stripe encaisse uniquement l'acompte calculé côté backend
+    const acompteNumber = toMoneyNumber(reservation.acompte);
+
+    if (!acompteNumber || acompteNumber <= 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "Acompte invalide ou manquant pour cette réservation.",
+      });
+    }
+
+    const unitAmount = Math.round(acompteNumber * 100);
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "payment",
-      customer_email: email,
+      customer_email: reservation.email,
       metadata: {
         reservationId: String(reservationId),
         logementId: String(logementId),
+        type: "havena_reservation_acompte",
       },
       line_items: [
         {
           price_data: {
             currency: "eur",
             product_data: {
-              name: `Réservation HAVENA - ${logement.titre || `${prenom} ${nom}`}`,
+              name: `Acompte réservation HAVENA - ${
+                logement.titre || "Logement"
+              }`,
+              description:
+                `Dates : ${reservation.dates || ""} | ` +
+                `Prix total : ${reservation.montant || ""} | ` +
+                `Acompte payé maintenant : ${reservation.acompte || ""}`,
             },
             unit_amount: unitAmount,
           },
@@ -1643,19 +1830,20 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
     });
 
     return res.json({
-      ok: true,
-      url: session.url,
-      reservationId,
-      logementId,
-      applicationFeeAmount: 0,
-      commission: "0%",
-    });
+  ok: true,
+  url: session.url,
+  reservationId,
+  logementId,
+  acompte_a_payer: reservation.acompte,
+  montant_total: reservation.montant,
+  message: "Veuillez procéder au paiement de votre acompte.",
+});
   } catch (err) {
-    console.error("Erreur création checkout Stripe :", err);
-
+    console.error("Erreur création checkout Stripe acompte :", err);
     return res.status(500).json({
       ok: false,
-      message: "Erreur Stripe",
+      message: "Erreur Stripe acompte",
+      error: err.message,
     });
   }
 });
@@ -1742,44 +1930,121 @@ app.get("/api/message-unlocks/check", async (req, res) => {
 app.post("/api/reservations", async (req, res) => {
   try {
     const {
+      logementId,
+      logement_id,
       prenom,
       nom,
       email,
       telephone,
       ville,
       type,
+      date_debut,
+      date_fin,
       dates,
       voyageurs,
-      montant,
-      acompte,
       role,
       message,
     } = req.body;
 
-    if (!prenom || !nom || !email) {
+    const finalLogementId = logementId || logement_id;
+
+    if (!prenom || !nom || !email || !finalLogementId) {
       return res.status(400).json({
         ok: false,
-        message: "Champs obligatoires manquants",
+        message: "Champs obligatoires manquants : prénom, nom, email et logement.",
       });
     }
+
+    const { data: logement, error: logementError } = await supabase
+      .from("logements")
+      .select("*")
+      .eq("id", Number(finalLogementId))
+      .maybeSingle();
+
+    if (logementError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture logement",
+        error: logementError.message,
+      });
+    }
+
+    if (!logement) {
+      return res.status(404).json({
+        ok: false,
+        message: "Logement introuvable.",
+      });
+    }
+
+    let finalDateDebut = date_debut || "";
+    let finalDateFin = date_fin || "";
+
+    if ((!finalDateDebut || !finalDateFin) && dates) {
+      const parts = String(dates)
+        .split(/au|à|-|→/i)
+        .map((part) => part.trim())
+        .filter(Boolean);
+
+      finalDateDebut = finalDateDebut || parts[0] || "";
+      finalDateFin = finalDateFin || parts[1] || "";
+    }
+
+    if (!finalDateDebut || !finalDateFin) {
+      return res.status(400).json({
+        ok: false,
+        message: "Dates de réservation manquantes.",
+      });
+    }
+
+    const calcul = calculateReservationAmounts({
+      prixParNuit: logement.prix_par_nuit,
+      acomptePourcentage: logement.acompte_pourcentage || 20,
+      dateDebut: finalDateDebut,
+      dateFin: finalDateFin,
+    });
+
+    if (!calcul.nuits || calcul.nuits <= 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "Dates invalides : la date de fin doit être après la date de début.",
+      });
+    }
+
+    if (!calcul.prix_par_nuit || calcul.prix_par_nuit <= 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "Prix par nuit invalide ou manquant pour ce logement.",
+      });
+    }
+
+    const datesTexte = `${finalDateDebut} au ${finalDateFin}`;
 
     const reservation = {
       prenom,
       nom,
-      email,
+      email: normalizeEmail(email),
       telephone: telephone || "",
-      ville: ville || "",
-      type: type || "",
-      dates: dates || "",
+      ville: ville || logement.ville || "",
+      type: type || logement.type || "",
+      dates: datesTexte,
       voyageurs: voyageurs || "",
-      montant: montant || "",
-      acompte: acompte || "",
+      montant: `${calcul.montant_total} €`,
+      acompte: `${calcul.acompte} €`,
       role: role || "",
-      message: message || "",
+      message:
+        `${message || ""}\n\n` +
+        `--- Calcul automatique HAVENA ---\n` +
+        `Logement ID : ${finalLogementId}\n` +
+        `Logement : ${logement.titre || ""}\n` +
+        `Prix par nuit : ${calcul.prix_par_nuit} €\n` +
+        `Nombre de nuits : ${calcul.nuits}\n` +
+        `Prix total : ${calcul.montant_total} €\n` +
+        `Acompte (${calcul.acompte_pourcentage}%) : ${calcul.acompte} €\n` +
+        `Solde restant : ${calcul.solde_restant} €`,
       payment_status: "pending",
       confirmation_envoyee_client: false,
       confirmation_envoyee_hebergeur: false,
-      statut: "reçue",
+      statut: "en attente de paiement acompte",
       created_at: new Date().toISOString(),
     };
 
@@ -1790,7 +2055,6 @@ app.post("/api/reservations", async (req, res) => {
 
     if (error) {
       console.error("Erreur Supabase réservation :", error);
-
       return res.status(500).json({
         ok: false,
         message: "Erreur lors de l’enregistrement Supabase",
@@ -1800,15 +2064,23 @@ app.post("/api/reservations", async (req, res) => {
 
     return res.status(201).json({
       ok: true,
-      message: "Réservation enregistrée",
+      message: "Réservation enregistrée avec calcul automatique",
       reservation: data[0],
+      calcul,
+      logement: {
+        id: logement.id,
+        titre: logement.titre,
+        ville: logement.ville,
+        type: logement.type,
+        hebergeur_email: logement.hebergeur_email,
+      },
     });
   } catch (err) {
     console.error("Erreur serveur réservation :", err);
-
     return res.status(500).json({
       ok: false,
-      message: "Erreur serveur",
+      message: "Erreur serveur réservation",
+      error: err.message,
     });
   }
 });
@@ -2680,7 +2952,66 @@ app.delete("/api/logements/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { error } = await supabase.from("logements").delete().eq("id", id);
+    const requesterEmail = normalizeEmail(
+      req.query.email ||
+        req.query.userEmail ||
+        req.headers["x-user-email"] ||
+        req.body?.email ||
+        req.body?.userEmail ||
+        req.body?.requesterEmail ||
+        ""
+    );
+
+    if (!id) {
+      return res.status(400).json({
+        ok: false,
+        message: "ID logement manquant.",
+      });
+    }
+
+    if (!requesterEmail) {
+      return res.status(401).json({
+        ok: false,
+        message: "Utilisateur non identifié. Suppression refusée.",
+      });
+    }
+
+    const { data: logement, error: readError } = await supabase
+      .from("logements")
+      .select("id, hebergeur_email")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (readError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture logement avant suppression.",
+        error: readError.message,
+      });
+    }
+
+    if (!logement) {
+      return res.status(404).json({
+        ok: false,
+        message: "Logement introuvable.",
+      });
+    }
+
+    const ownerEmail = normalizeEmail(logement.hebergeur_email);
+    const isAdmin = requesterEmail === "fasterame@gmail.com";
+    const isOwner = ownerEmail && ownerEmail === requesterEmail;
+
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({
+        ok: false,
+        message: "Suppression refusée : ce logement ne vous appartient pas.",
+      });
+    }
+
+    const { error } = await supabase
+      .from("logements")
+      .delete()
+      .eq("id", id);
 
     if (error) {
       return res.status(500).json({
@@ -2698,9 +3029,11 @@ app.delete("/api/logements/:id", async (req, res) => {
     return res.status(500).json({
       ok: false,
       message: "Erreur serveur",
+      error: err.message,
     });
   }
 });
+
 
 app.put("/api/logements/:id", async (req, res) => {
   try {
@@ -2716,6 +3049,8 @@ app.put("/api/logements/:id", async (req, res) => {
       chambres,
       couchages,
       prix,
+      prix_par_nuit,
+      acompte_pourcentage,
       animaux_acceptes,
       fumeur_accepte,
       equipements,
@@ -2725,64 +3060,123 @@ app.put("/api/logements/:id", async (req, res) => {
       parking,
       wifi,
       telephone,
+      hebergeur_email,
+      hebergeur_nom,
+      latitude,
+      longitude,
     } = req.body;
 
-    const publicLogementUpdateFields = [
-      titre,
-      type,
-      ville,
-      adresse,
-      surface,
-      chambres,
-      couchages,
-      prix,
-      animaux_acceptes,
-      fumeur_accepte,
-      equipements,
-      description,
-      statut,
-      jardin,
-      parking,
-      wifi,
-      disponibilites,
-    ];
+    const requesterEmail = normalizeEmail(
+      req.query.email ||
+        req.query.userEmail ||
+        req.headers["x-user-email"] ||
+        req.body?.email ||
+        req.body?.userEmail ||
+        req.body?.requesterEmail ||
+        hebergeur_email ||
+        ""
+    );
 
-    if (
-      publicLogementUpdateFields.some((field) => containsForbiddenContactInfo(field))
-    ) {
+    if (!id) {
       return res.status(400).json({
         ok: false,
-        message:
-          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
+        message: "ID logement manquant.",
       });
     }
 
-   
+    if (!requesterEmail) {
+      return res.status(401).json({
+        ok: false,
+        message: "Utilisateur non identifié. Modification refusée.",
+      });
+    }
+
+    const { data: existingLogement, error: readError } = await supabase
+      .from("logements")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (readError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture logement avant modification.",
+        error: readError.message,
+      });
+    }
+
+    if (!existingLogement) {
+      return res.status(404).json({
+        ok: false,
+        message: "Logement introuvable.",
+      });
+    }
+
+    const ownerEmail = normalizeEmail(existingLogement.hebergeur_email);
+    const isAdmin = requesterEmail === "fasterame@gmail.com";
+    const isOwner = ownerEmail && ownerEmail === requesterEmail;
+
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({
+        ok: false,
+        message: "Modification refusée : ce logement ne vous appartient pas.",
+      });
+    }
+
+    const subscriptionEmail = isAdmin ? ownerEmail : requesterEmail;
+    const hebergeurSubscriptionActive = isAdmin
+      ? true
+      : await isProfessionalSubscriptionActive(subscriptionEmail);
+
+    if (!hebergeurSubscriptionActive) {
+      return res.status(403).json({
+        ok: false,
+        message:
+          "Veuillez vous abonner à HAVENA Professionnel avant de modifier ou publier un logement.",
+      });
+    }
+
+    const finalPrixParNuit =
+      prix_par_nuit !== undefined && prix_par_nuit !== null
+        ? prix_par_nuit
+        : prix !== undefined && prix !== null
+        ? prix
+        : existingLogement.prix_par_nuit;
+
+    const updatePayload = {
+      titre: titre ?? existingLogement.titre,
+      type: type ?? existingLogement.type,
+      ville: ville ?? existingLogement.ville,
+      adresse: adresse ?? existingLogement.adresse ?? "",
+      surface: surface ?? existingLogement.surface ?? "",
+      chambres: chambres ?? existingLogement.chambres ?? "",
+      couchages: couchages ?? existingLogement.couchages ?? "",
+      prix_par_nuit: finalPrixParNuit ?? null,
+      acompte_pourcentage:
+        acompte_pourcentage ?? existingLogement.acompte_pourcentage ?? 20,
+      animaux_acceptes:
+        animaux_acceptes ?? existingLogement.animaux_acceptes ?? "",
+      fumeur_accepte: fumeur_accepte ?? existingLogement.fumeur_accepte ?? "",
+      equipements: equipements ?? existingLogement.equipements ?? "",
+      description: description ?? existingLogement.description ?? "",
+      statut: statut ?? existingLogement.statut ?? "Disponible",
+      jardin: jardin ?? existingLogement.jardin ?? "",
+      parking: parking ?? existingLogement.parking ?? "",
+      wifi: wifi ?? existingLogement.wifi ?? "",
+      disponibilites: disponibilites ?? existingLogement.disponibilites ?? "",
+      telephone: telephone ?? existingLogement.telephone ?? "",
+      hebergeur_nom: hebergeur_nom ?? existingLogement.hebergeur_nom ?? "",
+      hebergeur_email: existingLogement.hebergeur_email,
+      latitude: latitude ?? existingLogement.latitude ?? null,
+      longitude: longitude ?? existingLogement.longitude ?? null,
+    };
 
     const { data, error } = await supabase
       .from("logements")
-      .update({
-  titre: titre || "",
-  type: type || "",
-  ville: ville || "",
-  adresse: adresse || "",
-  surface: surface || "",
-  chambres: chambres || "",
-  couchages: couchages || "",
-  prix: prix || "",
-  animaux_acceptes: animaux_acceptes || "",
-  fumeur_accepte: fumeur_accepte || "",
-  equipements: equipements || "",
-  description: description || "",
-  statut: statut || "Disponible",
-  jardin: jardin || "",
-  parking: parking || "",
-  wifi: wifi || "",
-  disponibilites: disponibilites || "",
-  telephone: telephone || "",
-})
+      .update(updatePayload)
       .eq("id", id)
-      .select();
+      .select()
+      .single();
 
     if (error) {
       return res.status(500).json({
@@ -2794,16 +3188,18 @@ app.put("/api/logements/:id", async (req, res) => {
 
     return res.json({
       ok: true,
-      message: "Disponibilités mises à jour",
-      logement: data?.[0] || null,
+      message: "Logement mis à jour",
+      logement: data,
     });
   } catch (err) {
     return res.status(500).json({
       ok: false,
-      message: "Erreur serveur",
+      message: "Erreur serveur modification logement",
+      error: err.message,
     });
   }
 });
+
 
 /* ===============================
    OFFRES EMPLOI HAVENA
