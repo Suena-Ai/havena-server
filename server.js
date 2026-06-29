@@ -1935,30 +1935,37 @@ app.post("/api/reservations/:id/send-confirmations", async (req, res) => {
    LOGEMENTS
 =============================== */
 
-app.post("/api/logements", upload.single("image"), async (req, res) => {
+app.post("/api/logements", upload.array("images", 10), async (req, res) => {
   try {
-    const {
-      titre,
-      type,
-      ville,
-      adresse,
-      surface,
-      chambres,
-      couchages,
-      prix,
-      animaux_acceptes,
-      fumeur_accepte,
-      equipements,
-      description,
-      statut,
-      jardin,
-      parking,
-      wifi,
-      hebergeur_email,
-      hebergeur_nom,
-      disponibilites,
-      telephone,
-    } = req.body;
+   const {
+  titre,
+  type,
+  ville,
+  adresse,
+  surface,
+  chambres,
+  couchages,
+  prix_par_nuit,
+  acompte_pourcentage,
+  reduction,
+  animaux_acceptes,
+  fumeur_accepte,
+  equipements,
+  description,
+  statut,
+  jardin,
+  parking,
+  wifi,
+  hebergeur_email,
+  hebergeur_nom,
+  disponibilites,
+  telephone,
+  nombre_animaux_max,
+  types_animaux,
+  restrictions_animaux,
+  latitude,
+  longitude,
+} = req.body;
 
     if (!titre || !type || !ville) {
       return res.status(400).json({
@@ -1967,41 +1974,8 @@ app.post("/api/logements", upload.single("image"), async (req, res) => {
       });
     }
 
-    const publicLogementFields = [
-      titre,
-      type,
-      ville,
-      adresse,
-      surface,
-      chambres,
-      couchages,
-      prix,
-      animaux_acceptes,
-      fumeur_accepte,
-      equipements,
-      description,
-      statut,
-      jardin,
-      parking,
-      wifi,
-      disponibilites,
-    ];
-
-    if (publicLogementFields.some((field) => containsForbiddenContactInfo(field))) {
-      return res.status(400).json({
-        ok: false,
-        message:
-          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
-      });
-    }
-
-    if (telephone && containsForbiddenContactInfo(telephone)) {
-      return res.status(400).json({
-        ok: false,
-        message:
-          "Le téléphone ne doit pas être publié dans une annonce. Le contact doit passer par la messagerie HAVENA.",
-      });
-    }
+  
+    
 
     const normalizedHebergeurEmail = normalizeEmail(hebergeur_email);
 const hebergeurSubscriptionActive = await isProfessionalSubscriptionActive(normalizedHebergeurEmail) ;
@@ -2014,49 +1988,59 @@ OK : false,
 }
 
 
-    let image_url = "";
+   let image_url = "";
+let image_urls = [];
 
-    if (req.file) {
-      const mimeToExt = {
-        "image/jpeg": "jpg",
-        "image/jpg": "jpg",
-        "image/png": "png",
-        "image/webp": "webp",
-        "image/gif": "gif",
-        "image/avif": "avif",
-        "image/svg+xml": "svg",
-      };
+if (req.files && req.files.length > 0) {
+  const mimeToExt = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/avif": "avif",
+    "image/svg+xml": "svg",
+  };
 
-      const safeExt =
-        mimeToExt[req.file.mimetype] ||
-        String(req.file.originalname || "").split(".").pop()?.toLowerCase() ||
-        "jpg";
+  for (const image of req.files) {
+    const safeExt =
+      mimeToExt[image.mimetype] ||
+      String(image.originalname || "").split(".").pop()?.toLowerCase() ||
+      "jpg";
 
-      const fileName = `logement_${Date.now()}.${safeExt}`;
+    const fileName = `logement_${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2, 8)}.${safeExt}`;
 
-      const { data: uploadData, error: uploadError } = await supabase.storage
+    const { data: uploadData, error: uploadError } =
+      await supabase.storage
         .from("logements")
-        .upload(fileName, req.file.buffer, {
-          contentType: req.file.mimetype,
+        .upload(fileName, image.buffer, {
+          contentType: image.mimetype,
           upsert: false,
         });
 
-      if (uploadError) {
-        return res.status(500).json({
-          ok: false,
-          message: "Erreur upload image",
-          error: uploadError.message,
-        });
-      }
-
-      const uploadedPath = uploadData?.path || fileName;
-
-      const { data: publicUrlData } = supabase.storage
-        .from("logements")
-        .getPublicUrl(uploadedPath);
-
-      image_url = publicUrlData?.publicUrl || "";
+    if (uploadError) {
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur upload image",
+        error: uploadError.message,
+      });
     }
+
+    const uploadedPath = uploadData?.path || fileName;
+
+    const { data: publicUrlData } = supabase.storage
+      .from("logements")
+      .getPublicUrl(uploadedPath);
+
+    if (publicUrlData?.publicUrl) {
+      image_urls.push(publicUrlData.publicUrl);
+    }
+  }
+
+  image_url = image_urls[0] || "";
+}
 
     let stripeAccountId = "";
 
@@ -2078,7 +2062,6 @@ OK : false,
       surface: surface || "",
       chambres: chambres || "",
       couchages: couchages || "",
-      prix: prix || "",
       animaux_acceptes: animaux_acceptes || "",
       fumeur_accepte: fumeur_accepte || "",
       equipements: equipements || "",
@@ -2093,6 +2076,11 @@ OK : false,
       disponibilites: disponibilites || "",
       telephone: telephone || "",
       stripe_account_id: stripeAccountId,
+      prix_par_nuit: prix_par_nuit || null,
+acompte_pourcentage: acompte_pourcentage || 20,
+images: image_urls,
+latitude: latitude || null,
+longitude: longitude || null,
     };
 
     const { data, error } = await supabase
@@ -2769,19 +2757,30 @@ app.put("/api/logements/:id", async (req, res) => {
       });
     }
 
-    if (telephone && containsForbiddenContactInfo(telephone)) {
-      return res.status(400).json({
-        ok: false,
-        message:
-          "Le téléphone ne doit pas être publié dans une annonce. Le contact doit passer par la messagerie HAVENA.",
-      });
-    }
+   
 
     const { data, error } = await supabase
       .from("logements")
       .update({
-        disponibilites: disponibilites || "",
-      })
+  titre: titre || "",
+  type: type || "",
+  ville: ville || "",
+  adresse: adresse || "",
+  surface: surface || "",
+  chambres: chambres || "",
+  couchages: couchages || "",
+  prix: prix || "",
+  animaux_acceptes: animaux_acceptes || "",
+  fumeur_accepte: fumeur_accepte || "",
+  equipements: equipements || "",
+  description: description || "",
+  statut: statut || "Disponible",
+  jardin: jardin || "",
+  parking: parking || "",
+  wifi: wifi || "",
+  disponibilites: disponibilites || "",
+  telephone: telephone || "",
+})
       .eq("id", id)
       .select();
 
