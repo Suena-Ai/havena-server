@@ -3855,7 +3855,6 @@ app.get("/api/partner-ads/active", async (req, res) => {
       .from("partner_ads")
       .select("*")
       .eq("is_active", true)
-      .order("updated_at", { ascending: false })
       .limit(20);
 
     if (error) {
@@ -3867,27 +3866,9 @@ app.get("/api/partner-ads/active", async (req, res) => {
       });
     }
 
-    const ads = [];
-
-    for (const ad of data || []) {
-      const ownerEmail = normalizeEmail(ad.owner_email);
-      const isAdminOwner = ownerEmail === "fasterame@gmail.com";
-
-      if (isAdminOwner) {
-        ads.push(ad);
-        continue;
-      }
-
-      const subscriptionActive = await isProfessionalSubscriptionActive(ownerEmail);
-
-      if (subscriptionActive) {
-        ads.push(ad);
-      }
-    }
-
     return res.json({
       ok: true,
-      ads,
+      ads: data || [],
     });
   } catch (err) {
     console.error("Erreur serveur publicités actives :", err);
@@ -3898,6 +3879,69 @@ app.get("/api/partner-ads/active", async (req, res) => {
     });
   }
 });
+app.get("/api/host-ad-banners/active", async (req, res) => {
+  try {
+    const { data: banners, error } = await supabase
+      .from("host_ad_banners")
+      .select("*")
+      .eq("status", "published")
+      .limit(20);
+
+    if (error) {
+      console.error("Erreur lecture banderoles hébergeurs :", error);
+      return res.status(500).json({
+        ok: false,
+        message: "Erreur lecture banderoles hébergeurs.",
+        error: error.message,
+      });
+    }
+
+    const bannerIds = (banners || []).map((banner) => banner.id);
+
+    let photos = [];
+
+    if (bannerIds.length > 0) {
+      const { data: photosData, error: photosError } = await supabase
+        .from("host_ad_banner_photos")
+        .select("*")
+        .in("banner_id", bannerIds);
+
+      if (photosError) {
+        console.error("Erreur lecture photos banderoles :", photosError);
+      } else {
+        photos = photosData || [];
+      }
+    }
+
+    const photosByBanner = {};
+
+    photos.forEach((photo) => {
+      if (!photosByBanner[photo.banner_id]) {
+        photosByBanner[photo.banner_id] = [];
+      }
+
+      photosByBanner[photo.banner_id].push(photo);
+    });
+
+    const result = (banners || []).map((banner) => ({
+      ...banner,
+      photos: photosByBanner[banner.id] || [],
+    }));
+
+    return res.json({
+      ok: true,
+      banners: result,
+    });
+  } catch (err) {
+    console.error("Erreur serveur banderoles hébergeurs :", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur serveur banderoles hébergeurs.",
+      error: err.message,
+    });
+  }
+});
+
 
 app.get("/api/partner-ads/me", async (req, res) => {
   try {
