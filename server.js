@@ -652,6 +652,11 @@ app.post("/api/auth/register", async (req, res) => {
       email,
       password,
       role,
+      phone,
+contact_email,
+contact_profile_completed,
+contact_updated_at,
+
       accept_promotions,
       accept_promotions_at,
       poste_recherche,
@@ -787,6 +792,14 @@ console.log("ROLE NORMALISÉ :", normalizedRole);
       email: normalizedEmail,
       password: hashedPassword,
       role: normalizedRole,
+      phone: String(phone || "").trim(),
+contact_email: String(contact_email || normalizedEmail || "").trim().toLowerCase(),
+contact_profile_completed: Boolean(
+  String(phone || "").trim() &&
+    String(contact_email || normalizedEmail || "").trim()
+),
+contact_updated_at: contact_updated_at || new Date().toISOString(),
+
       email_confirmed: false,
       created_at: new Date().toISOString(),
       accept_promotions: Boolean(accept_promotions),
