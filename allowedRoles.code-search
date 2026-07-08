@@ -1,0 +1,25 @@
+# Query: allowedRoles
+# ContextLines: 1
+
+4 results - 1 file
+
+server.js:
+   534  
+   535:   const allowedRoles = [
+   536    "saisonnier",
+
+   542  
+   543:     if (!allowedRoles.includes(normalizedRole)) {
+   544        return res.status(400).json({
+
+  5264  
+  5265:     const allowedRoles = [
+  "saisonnier",
+  "etudiant",
+  "vacancier",
+  "employeur",
+  "hebergeur"
+];
+  5266  
+  5267:     const cleanRole = allowedRoles.includes(userRole)
+  5268        ? userRole

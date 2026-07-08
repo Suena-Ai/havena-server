@@ -5868,6 +5868,128 @@ app.get("/api/documents/open/:id", async (req, res) => {
   }
 });
 
+app.post("/api/admin/send-contact-profile-reminders", async (req, res) => {
+  try {
+    const secret = req.headers["x-cron-secret"];
+
+    if (!process.env.CONTACT_REMINDER_SECRET) {
+      return res.status(500).json({
+        ok: false,
+        message: "CONTACT_REMINDER_SECRET manquant dans les variables Render.",
+      });
+    }
+
+    if (secret !== process.env.CONTACT_REMINDER_SECRET) {
+      return res.status(401).json({
+        ok: false,
+        message: "Accès refusé.",
+      });
+    }
+
+    const { data: users, error } = await supabase
+      .from("havena_users")
+      .select(
+        "id, email, role, phone, contact_email, contact_profile_completed, contact_reminder_sent_at"
+      );
+
+    if (error) {
+      throw error;
+    }
+
+    const allowedRoles = [
+      "employeur",
+      "recruteur",
+      "candidat",
+      "saisonnier",
+      "etudiant",
+    ];
+
+    const normalizeRole = (role) =>
+      String(role || "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+
+    const contactsToRemind = (users || []).filter((user) => {
+      const role = normalizeRole(user.role);
+      const email = String(user.email || "").trim();
+      const phone = String(user.phone || "").trim();
+      const contactEmail = String(user.contact_email || "").trim();
+
+      return (
+        email &&
+        allowedRoles.includes(role) &&
+        (!phone || !contactEmail) &&
+        !user.contact_reminder_sent_at
+      );
+    });
+
+    let sentCount = 0;
+
+    for (const user of contactsToRemind) {
+      const profileUrl = "https://www.havena1.fr/profil";
+
+      await transporter.sendMail({
+        from: process.env.MAIL_FROM || process.env.MAIL_USER,
+        to: user.email,
+        subject: "Complétez vos coordonnées sur HAVENA",
+        html: `
+          <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #24124D;">
+            <h2>Votre profil HAVENA est presque complet</h2>
+
+            <p>Bonjour,</p>
+
+            <p>
+              Afin de faciliter les échanges entre candidats, employeurs et recruteurs,
+              nous vous invitons à compléter vos coordonnées sur HAVENA.
+            </p>
+
+            <p>
+              Merci d’ajouter votre <strong>numéro de téléphone</strong> et votre
+              <strong>email de contact</strong> dans votre profil.
+            </p>
+
+            <p>
+              <a href="${profileUrl}" style="display:inline-block;padding:12px 18px;background:#6C4CF1;color:white;text-decoration:none;border-radius:999px;font-weight:bold;">
+                Compléter mon profil
+              </a>
+            </p>
+
+            <p>
+              À très bientôt,<br/>
+              L’équipe HAVENA
+            </p>
+          </div>
+        `,
+      });
+
+      await supabase
+        .from("havena_users")
+        .update({
+          contact_reminder_sent_at: new Date().toISOString(),
+        })
+        .eq("id", user.id);
+
+      sentCount += 1;
+    }
+
+    return res.json({
+      ok: true,
+      message: "Emails de rappel envoyés.",
+      sent: sentCount,
+    });
+  } catch (error) {
+    console.error("Erreur envoi rappels coordonnées :", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: "Erreur lors de l’envoi des rappels coordonnées.",
+      error: error.message,
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`HAVENA server lancé sur le port ${PORT}`);
 });
