@@ -651,60 +651,22 @@ app.post("/api/auth/register", async (req, res) => {
       lastName,
       email,
       password,
-      role,
-      phone,
-contact_email,
-contact_profile_completed,
-contact_updated_at,
-
       accept_promotions,
       accept_promotions_at,
-      poste_recherche,
-      mois_disponible,
-      periode_disponible,
-      niveau_etudes,
-      diplomes,
-      formation,
-      experiences,
-      competences,
-      langues,
-      permis,
-      mobilite,
-      type_contrat_recherche,
-      secteur_recherche,
-      presentation,
     } = req.body;
 
-    if (!firstName || !lastName || !email || !password || !role) {
+    if (!firstName || !lastName || !email || !password) {
       return res.status(400).json({
         ok: false,
-        message: "Champs obligatoires manquants",
+        message: "Prénom, nom, adresse email et mot de passe obligatoires.",
       });
     }
 
     const normalizedEmail = normalizeEmail(email);
-    const normalizedRole = String(role).trim().toLowerCase();
-console.log("ROLE REÇU :", role);
-console.log("ROLE NORMALISÉ :", normalizedRole);
-
-  const allowedRoles = [
-  "saisonnier",
-  "etudiant",
-  "vacancier",
-  "employeur",
-  "hebergeur"
-];
-
-    if (!allowedRoles.includes(normalizedRole)) {
-      return res.status(400).json({
-        ok: false,
-        message: "Rôle invalide",
-      });
-    }
 
     const { data: existingUser, error: existingError } = await supabase
       .from("havena_users")
-      .select("id, email, role")
+      .select("id, email")
       .eq("email", normalizedEmail)
       .maybeSingle();
 
@@ -717,132 +679,55 @@ console.log("ROLE NORMALISÉ :", normalizedRole);
     }
 
     if (existingUser) {
-      if (existingUser.role !== normalizedRole) {
-        return res.status(409).json({
-          ok: false,
-          message: "Cette adresse email est déjà utilisée avec un autre profil.",
-        });
-      }
-
       return res.status(409).json({
         ok: false,
         message:
-          "Cette adresse email est déjà utilisée pour ce profil. Veuillez vous connecter.",
+          "Cette adresse email possède déjà un compte HAVENA. Veuillez vous connecter.",
       });
     }
 
-    const requiredCandidateFields = [
-      poste_recherche,
-      mois_disponible,
-      periode_disponible,
-      niveau_etudes,
-      experiences,
-      competences,
-      langues,
-      mobilite,
-      type_contrat_recherche,
-      secteur_recherche,
-      presentation,
-    ];
-
-    if (
-      (normalizedRole === "saisonnier" || normalizedRole === "etudiant") &&
-      requiredCandidateFields.some((field) => !String(field || "").trim())
-    ) {
-      return res.status(400).json({
-        ok: false,
-        message:
-          "Pour créer un compte candidat HAVENA, veuillez compléter les informations essentielles de votre profil : poste recherché, disponibilité, expérience, compétences, langues, mobilité, type de contrat, secteur recherché et présentation.",
-      });
-    }
-
-    const publicRegisterCandidateFields = [
-      poste_recherche,
-      mois_disponible,
-      periode_disponible,
-      niveau_etudes,
-      diplomes,
-      formation,
-      experiences,
-      competences,
-      langues,
-      permis,
-      mobilite,
-      type_contrat_recherche,
-      secteur_recherche,
-      presentation,
-    ];
-
-    if (
-      (normalizedRole === "saisonnier" || normalizedRole === "etudiant") &&
-      publicRegisterCandidateFields.some((field) => containsForbiddenContactInfo(field))
-    ) {
-      return res.status(400).json({
-        ok: false,
-        message:
-          "Coordonnées directes interdites. Le contact doit passer par la messagerie HAVENA.",
-      });
-    }
-
-    const hashedPassword = await bcrypt.hash(String(password), 12);
+    const hashedPassword = await bcrypt.hash(
+      String(password),
+      12
+    );
 
     const newUser = {
       first_name: String(firstName).trim(),
       last_name: String(lastName).trim(),
       email: normalizedEmail,
       password: hashedPassword,
-      role: normalizedRole,
-      phone: String(phone || "").trim(),
-contact_email: String(contact_email || normalizedEmail || "").trim().toLowerCase(),
-contact_profile_completed: Boolean(
-  String(phone || "").trim() &&
-    String(contact_email || normalizedEmail || "").trim()
-),
-contact_updated_at: contact_updated_at || new Date().toISOString(),
+
+      // Valeur technique unique pour tous les comptes HAVENA.
+      // Il n'existe plus plusieurs types de comptes.
+      role: "user",
+
+      phone: "",
+      contact_email: normalizedEmail,
+      contact_profile_completed: false,
+      contact_updated_at: new Date().toISOString(),
 
       email_confirmed: false,
       created_at: new Date().toISOString(),
-      accept_promotions: Boolean(accept_promotions),
-accept_promotions_at: accept_promotions
-  ? accept_promotions_at || new Date().toISOString()
-  : null,
-unsubscribed_promotions_at: null,
 
-      ...(normalizedRole === "saisonnier" || normalizedRole === "etudiant"
-        ? {
-            poste_recherche: poste_recherche || null,
-            mois_disponible: mois_disponible || null,
-            periode_disponible: periode_disponible || null,
-            niveau_etudes: niveau_etudes || null,
-            diplomes: diplomes || null,
-            formation: formation || null,
-            experiences: experiences || null,
-            competences: competences || null,
-            langues: langues || null,
-            permis: permis || null,
-            mobilite: mobilite || null,
-            type_contrat_recherche: type_contrat_recherche || null,
-            secteur_recherche: secteur_recherche || null,
-            presentation: presentation || null,
-          }
-        : {}),
+      accept_promotions: Boolean(accept_promotions),
+      accept_promotions_at: accept_promotions
+        ? accept_promotions_at || new Date().toISOString()
+        : null,
+
+      unsubscribed_promotions_at: null,
     };
 
     const { data, error } = await supabase
       .from("havena_users")
       .insert([newUser])
-      .select(
-        `
+      .select(`
         id,
         first_name,
         last_name,
         email,
-        role,
         email_confirmed,
-        stripe_account_id,
         created_at
-      `
-      )
+      `)
       .single();
 
     if (error) {
@@ -853,10 +738,13 @@ unsubscribed_promotions_at: null,
       });
     }
 
-    const confirmToken = buildEmailConfirmToken(normalizedEmail);
-    const confirmLink = `${FRONTEND_URL}/confirm-email?token=${encodeURIComponent(
-      confirmToken
-    )}&email=${encodeURIComponent(normalizedEmail)}`;
+    const confirmToken =
+      buildEmailConfirmToken(normalizedEmail);
+
+    const confirmLink =
+      `${FRONTEND_URL}/confirm-email?token=${encodeURIComponent(
+        confirmToken
+      )}&email=${encodeURIComponent(normalizedEmail)}`;
 
     try {
       await transporter.sendMail({
@@ -873,7 +761,10 @@ unsubscribed_promotions_at: null,
           `HAVENA`,
       });
     } catch (mailError) {
-      console.error("Erreur envoi email confirmation :", mailError);
+      console.error(
+        "Erreur envoi email confirmation :",
+        mailError
+      );
     }
 
     return res.status(201).json({
@@ -1087,34 +978,30 @@ app.post("/api/partner-promotions/send-daily-emails", async (req, res) => {
 });
 app.post("/api/auth/login", async (req, res) => {
   try {
-    const { email, password, role } = req.body;
+    const { email, password } = req.body;
 
-    if (!email || !password || !role) {
+    if (!email || !password) {
       return res.status(400).json({
         ok: false,
-        message: "Champs obligatoires manquants",
+        message: "Adresse email et mot de passe obligatoires.",
       });
     }
 
     const normalizedEmail = normalizeEmail(email);
-    const normalizedRole = String(role).trim().toLowerCase();
 
     const { data: user, error } = await supabase
       .from("havena_users")
-     .select(`
-  id,
-  email,
-  password,
-  role,
-  first_name,
-  last_name,
-  email_confirmed,
-  stripe_account_id,
-  accept_promotions,
-  accept_promotions_at,
-  unsubscribed_promotions_at
-`)
-
+      .select(`
+        id,
+        email,
+        password,
+        first_name,
+        last_name,
+        email_confirmed,
+        accept_promotions,
+        accept_promotions_at,
+        unsubscribed_promotions_at
+      `)
       .eq("email", normalizedEmail)
       .maybeSingle();
 
@@ -1133,18 +1020,11 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
-    if (user.role !== normalizedRole) {
-      return res.status(403).json({
-        ok: false,
-        message: `Cette adresse email est déjà liée au profil "${user.role}".`,
-      });
-    }
-
     if (!user.email_confirmed) {
       return res.status(403).json({
         ok: false,
         message:
-          "Veuillez confirmer votre adresse email avant de vous connecter. Un lien de confirmation vous a été envoyé par email.",
+          "Veuillez confirmer votre adresse email avant de vous connecter.",
       });
     }
 
@@ -1153,17 +1033,28 @@ app.post("/api/auth/login", async (req, res) => {
 
     let passwordIsValid = false;
 
-    if (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$")) {
-      passwordIsValid = await bcrypt.compare(incomingPassword, storedPassword);
+    if (
+      storedPassword.startsWith("$2a$") ||
+      storedPassword.startsWith("$2b$")
+    ) {
+      passwordIsValid = await bcrypt.compare(
+        incomingPassword,
+        storedPassword
+      );
     } else {
       passwordIsValid = storedPassword === incomingPassword;
 
       if (passwordIsValid) {
-        const hashedPassword = await bcrypt.hash(incomingPassword, 12);
+        const hashedPassword = await bcrypt.hash(
+          incomingPassword,
+          12
+        );
 
         await supabase
           .from("havena_users")
-          .update({ password: hashedPassword })
+          .update({
+            password: hashedPassword,
+          })
           .eq("email", normalizedEmail);
       }
     }
@@ -1181,14 +1072,13 @@ app.post("/api/auth/login", async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        role: user.role,
         first_name: user.first_name,
         last_name: user.last_name,
         email_confirmed: user.email_confirmed,
         accept_promotions: user.accept_promotions,
-accept_promotions_at: user.accept_promotions_at,
-unsubscribed_promotions_at: user.unsubscribed_promotions_at,
-        stripe_account_id: user.stripe_account_id || "",
+        accept_promotions_at: user.accept_promotions_at,
+        unsubscribed_promotions_at:
+          user.unsubscribed_promotions_at,
       },
     });
   } catch (err) {
