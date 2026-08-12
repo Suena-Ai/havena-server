@@ -7,7 +7,9 @@ const Stripe = require("stripe");
 const transporter = require("./mailer");
 const multer = require("multer");
 const bcrypt = require("bcryptjs");
-
+const {
+  rechercherVolsHAVENA,
+} = require("./flight-scraper");
 dotenv.config();
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -5895,7 +5897,598 @@ app.post("/api/admin/send-contact-profile-reminders", async (req, res) => {
     });
   }
 });
+/* ======================================================
+   HAVENA MASTER GUIDE - MOTEUR DE RECHERCHE VOLS
+====================================================== */
 
+async function havenaResolveAirportCode(value) {
+  const search = String(value || "").trim();
+
+  if (!search) {
+    throw new Error("Ville ou aéroport manquant.");
+  }
+
+  // Si l'utilisateur saisit déjà CDG, NOU, LHR...
+  if (/^[A-Za-z]{3}$/.test(search)) {
+    return search.toUpperCase();
+  }
+
+  const url = new URL(
+    "https://autocomplete.travelpayouts.com/places2"
+  );
+
+  url.searchParams.set("term", search);
+  url.searchParams.set("locale", "fr");
+  url.searchParams.append("types[]", "city");
+  url.searchParams.append("types[]", "airport");
+
+  const response = await fetch(url.toString());
+
+  if (!response.ok) {
+    throw new Error(
+      `Impossible de trouver l'aéroport pour ${search}.`
+    );
+  }
+
+  const locations = await response.json();
+
+  if (!Array.isArray(locations) || locations.length === 0) {
+    throw new Error(
+      `Aucun aéroport trouvé pour ${search}.`
+    );
+  }
+
+  // On privilégie le code ville.
+  // Exemple : Paris = PAR, Londres = LON
+  const city =
+    locations.find(
+      (location) =>
+        location.type === "city" &&
+        location.code
+    ) ||
+    locations.find(
+      (location) =>
+        location.city_code
+    ) ||
+    locations.find(
+      (location) =>
+        location.code
+    );
+
+  const code =
+    city?.type === "city"
+      ? city.code
+      : city?.city_code || city?.code;
+
+  if (!code) {
+    throw new Error(
+      `Code aéroport introuvable pour ${search}.`
+    );
+  }
+
+  return String(code).toUpperCase();
+}
+
+
+/* ------------------------------------------------------
+   CONNECTEUR VOLS N°1
+   GOOGLE FLIGHTS VIA SERPAPI
+------------------------------------------------------ */
+
+async function havenaSearchFlightsSerpApi({
+  departureCode,
+  destinationCode,
+  dateAller,
+  dateRetour,
+  adultes,
+  enfants,
+}) {
+  const apiKey = String(
+    process.env.SERPAPI_API_KEY || ""
+  ).trim();
+
+  if (!apiKey) {
+    return {
+      source: "serpapi_google_flights",
+      available: false,
+      error: "SERPAPI_API_KEY manquante",
+      results: [],
+    };
+  }
+
+  const url = new URL(
+    "https://serpapi.com/search.json"
+  );
+
+  url.searchParams.set(
+    "engine",
+    "google_flights"
+  );
+
+  url.searchParams.set(
+    "departure_id",
+    departureCode
+  );
+
+  url.searchParams.set(
+    "arrival_id",
+    destinationCode
+  );
+
+  url.searchParams.set(
+    "outbound_date",
+    dateAller
+  );
+
+  if (dateRetour) {
+    url.searchParams.set(
+      "return_date",
+      dateRetour
+    );
+
+    url.searchParams.set(
+      "type",
+      "1"
+    );
+  } else {
+    url.searchParams.set(
+      "type",
+      "2"
+    );
+  }
+
+  url.searchParams.set(
+    "adults",
+    String(Math.max(1, Number(adultes) || 1))
+  );
+
+  url.searchParams.set(
+    "children",
+    String(Math.max(0, Number(enfants) || 0))
+  );
+
+  url.searchParams.set(
+    "currency",
+    "EUR"
+  );
+
+  url.searchParams.set(
+    "hl",
+    "fr"
+  );
+
+  url.searchParams.set(
+    "gl",
+    "fr"
+  );
+
+  // Prix les moins chers en premier
+  url.searchParams.set(
+    "sort_by",
+    "2"
+  );
+
+  // Force une recherche récente
+  url.searchParams.set(
+    "no_cache",
+    "true"
+  );
+
+  url.searchParams.set(
+    "api_key",
+    apiKey
+  );
+
+  const response = await fetch(
+    url.toString()
+  );
+
+  if (!response.ok) {
+    const details = await response.text();
+
+    console.error(
+      "Erreur SerpApi Google Flights :",
+      response.status,
+      details
+    );
+
+    return {
+      source: "serpapi_google_flights",
+      available: false,
+      error: `Erreur source vols ${response.status}`,
+      results: [],
+    };
+  }
+
+  const data = await response.json();
+
+  const rawFlights = [
+    ...(Array.isArray(data.best_flights)
+      ? data.best_flights
+      : []),
+
+    ...(Array.isArray(data.other_flights)
+      ? data.other_flights
+      : []),
+  ];
+
+  const results = rawFlights
+    .map((offer, index) => {
+      const segments =
+        Array.isArray(offer.flights)
+          ? offer.flights
+          : [];
+
+      if (segments.length === 0) {
+        return null;
+      }
+
+      const firstFlight = segments[0];
+
+      const lastFlight =
+        segments[segments.length - 1];
+
+      const airlines = [
+        ...new Set(
+          segments
+            .map((flight) => flight.airline)
+            .filter(Boolean)
+        ),
+      ];
+
+      const price = Number(offer.price);
+
+      if (!Number.isFinite(price)) {
+        return null;
+      }
+
+      return {
+        id: `serpapi-${index}-${price}`,
+
+        source:
+          "Google Flights / SerpApi",
+
+        airlines,
+
+        airline:
+          airlines.join(" + ") ||
+          "Compagnie aérienne",
+
+        airlineLogo:
+          offer.airline_logo ||
+          firstFlight?.airline_logo ||
+          "",
+
+        price,
+
+        currency: "EUR",
+
+        totalDurationMinutes:
+          Number(offer.total_duration) || null,
+
+        stops:
+          Array.isArray(offer.layovers)
+            ? offer.layovers.length
+            : Math.max(
+                segments.length - 1,
+                0
+              ),
+
+        departureAirport:
+          firstFlight?.departure_airport?.id ||
+          departureCode,
+
+        departureAirportName:
+          firstFlight?.departure_airport?.name ||
+          "",
+
+        departureTime:
+          firstFlight?.departure_airport?.time ||
+          "",
+
+        arrivalAirport:
+          lastFlight?.arrival_airport?.id ||
+          destinationCode,
+
+        arrivalAirportName:
+          lastFlight?.arrival_airport?.name ||
+          "",
+
+        arrivalTime:
+          lastFlight?.arrival_airport?.time ||
+          "",
+
+        flightNumbers:
+          segments
+            .map(
+              (flight) =>
+                flight.flight_number
+            )
+            .filter(Boolean),
+
+        layovers:
+          Array.isArray(offer.layovers)
+            ? offer.layovers
+            : [],
+
+        type:
+          offer.type || "",
+
+        departureToken:
+          offer.departure_token || "",
+
+        checkedAt:
+          new Date().toISOString(),
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    source: "serpapi_google_flights",
+    available: true,
+    error: null,
+    results,
+  };
+}
+
+
+/* ------------------------------------------------------
+   ORCHESTRATEUR HAVENA VOLS
+------------------------------------------------------ */
+
+async function havenaRunFlightSources(search) {
+  const sources = [
+    havenaSearchFlightsSerpApi(search),
+
+    /*
+      PLUS TARD, ON AJOUTERA ICI :
+
+      havenaSearchAirFrance(search),
+      havenaSearchIberia(search),
+      havenaSearchQatar(search),
+      havenaSearchSingapore(search),
+      etc.
+
+      uniquement lorsque le partenaire
+      autorise cette récupération.
+    */
+  ];
+
+  const settled =
+    await Promise.allSettled(sources);
+
+  const results = [];
+
+  const sourceStatus = [];
+
+  settled.forEach((sourceResult) => {
+    if (
+      sourceResult.status === "fulfilled"
+    ) {
+      const source =
+        sourceResult.value;
+
+      sourceStatus.push({
+        source: source.source,
+        available:
+          source.available,
+        error:
+          source.error || null,
+        resultCount:
+          source.results?.length || 0,
+      });
+
+      if (
+        Array.isArray(source.results)
+      ) {
+        results.push(
+          ...source.results
+        );
+      }
+    } else {
+      sourceStatus.push({
+        source: "unknown",
+        available: false,
+        error:
+          sourceResult.reason?.message ||
+          "Source indisponible",
+        resultCount: 0,
+      });
+    }
+  });
+
+  // On classe tous les partenaires
+  // du moins cher au plus cher.
+  results.sort(
+    (a, b) =>
+      Number(a.price) -
+      Number(b.price)
+  );
+
+  return {
+    results,
+    sources: sourceStatus,
+  };
+}
+
+
+/* ------------------------------------------------------
+   ROUTE HAVENA MASTER GUIDE - VOLS
+------------------------------------------------------ */
+
+app.post(
+  "/api/travel/search-flights",
+  async (req, res) => {
+    try {
+      const {
+        depart,
+        destination,
+        dateAller,
+        dateRetour,
+        adultes = 1,
+        enfants = 0,
+      } = req.body || {};
+
+      if (
+        !depart ||
+        !destination ||
+        !dateAller
+      ) {
+        return res
+          .status(400)
+          .json({
+            ok: false,
+            message:
+              "Départ, destination et date aller sont obligatoires.",
+          });
+      }
+
+      const [
+        departureCode,
+        destinationCode,
+      ] = await Promise.all([
+        havenaResolveAirportCode(
+          depart
+        ),
+        havenaResolveAirportCode(
+          destination
+        ),
+      ]);
+
+      const search = {
+        departureCode,
+        destinationCode,
+        dateAller,
+        dateRetour:
+          dateRetour || "",
+        adultes:
+          Math.max(
+            1,
+            Number(adultes) || 1
+          ),
+        enfants:
+          Math.max(
+            0,
+            Number(enfants) || 0
+          ),
+      };
+
+      console.log(
+        "HAVENA MASTER GUIDE - recherche vols :",
+        search
+      );
+
+      const {
+        results,
+        sources,
+      } =
+        await havenaRunFlightSources(
+          search
+        );
+
+      return res.json({
+        ok: true,
+
+        search: {
+          depart,
+          departureCode,
+          destination,
+          destinationCode,
+          dateAller,
+          dateRetour:
+            dateRetour || "",
+          adultes:
+            search.adultes,
+          enfants:
+            search.enfants,
+        },
+
+        resultCount:
+          results.length,
+
+        results,
+
+        sources,
+
+        checkedAt:
+          new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error(
+        "Erreur HAVENA MASTER GUIDE vols :",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          ok: false,
+          message:
+            error?.message ||
+            "Erreur moteur vols HAVENA.",
+        });
+    }
+  }
+);
+/* ======================================================
+   HAVENA MASTER GUIDE - ROUTE RECHERCHE VOLS
+====================================================== */
+
+const SOURCES_VOLS_HAVENA = [];
+
+app.post("/api/travel/search-flights", async (req, res) => {
+  try {
+    const {
+      depart,
+      destination,
+      dateAller,
+      dateRetour,
+      adultes = 1,
+      enfants = 0,
+    } = req.body || {};
+
+    if (!depart || !destination || !dateAller) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Départ, destination et date aller sont obligatoires.",
+      });
+    }
+
+    const recherche = {
+      depart: String(depart).trim(),
+      destination: String(destination).trim(),
+      dateAller: String(dateAller).trim(),
+      dateRetour: String(dateRetour || "").trim(),
+      adultes: Math.max(1, Number(adultes) || 1),
+      enfants: Math.max(0, Number(enfants) || 0),
+    };
+
+    console.log(
+      "HAVENA MASTER GUIDE - recherche vols :",
+      recherche
+    );
+
+   const resultat = await rechercherVolsHAVENA(
+  SOURCES_VOLS_HAVENA,
+  recherche
+);
+
+    return res.json(resultat);
+  } catch (error) {
+    console.error(
+      "Erreur moteur vols HAVENA :",
+      error
+    );
+
+    return res.status(500).json({
+      ok: false,
+      message:
+        error?.message ||
+        "Erreur pendant la recherche de vols.",
+    });
+  }
+});
 app.listen(PORT, () => {
   console.log(`HAVENA server lancé sur le port ${PORT}`);
 });
