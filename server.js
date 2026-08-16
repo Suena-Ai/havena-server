@@ -6462,7 +6462,7 @@ app.post(
 
 
 
-app.post("/api/travel/search-flights", async (req, res) => {
+app.post("/api/travel/search-flights-serpapi", async (req, res) => {
   try {
     const {
       depart,
