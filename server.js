@@ -5933,7 +5933,18 @@ async function havenaResolveAirportCode(value) {
   if (!search) {
     throw new Error("Ville ou aéroport manquant.");
   }
+const searchNormalise = search
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "");
 
+if (searchNormalise === "paris") {
+  return "CDG,ORY";
+}
+
+if (searchNormalise === "noumea") {
+  return "NOU";
+}
   // Si l'utilisateur saisit déjà CDG, NOU, LHR...
   if (/^[A-Za-z]{3}$/.test(search)) {
     return search.toUpperCase();
