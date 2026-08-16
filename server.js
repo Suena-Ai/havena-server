@@ -6270,6 +6270,132 @@ checkedAt:
     results,
   };
 }
+async function havenaGetReturnFlightsSerpApi(
+  departureToken
+) {
+  const apiKey = String(
+    process.env.SERPAPI_API_KEY || ""
+  ).trim();
+
+  if (!apiKey) {
+    throw new Error(
+      "SERPAPI_API_KEY manquante"
+    );
+  }
+
+  if (!departureToken) {
+    return [];
+  }
+
+  const url = new URL(
+    "https://serpapi.com/search.json"
+  );
+
+  url.searchParams.set(
+    "engine",
+    "google_flights"
+  );
+
+  url.searchParams.set(
+    "departure_token",
+    departureToken
+  );
+
+  url.searchParams.set(
+    "currency",
+    "EUR"
+  );
+
+  url.searchParams.set(
+    "hl",
+    "fr"
+  );
+
+  url.searchParams.set(
+    "gl",
+    "fr"
+  );
+
+  url.searchParams.set(
+    "api_key",
+    apiKey
+  );
+
+  const response =
+    await fetch(url.toString());
+
+  if (!response.ok) {
+    const details =
+      await response.text();
+
+    throw new Error(
+      `Erreur vols retour SerpApi ${response.status}: ${details}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  const rawFlights = [
+    ...(Array.isArray(data.best_flights)
+      ? data.best_flights
+      : []),
+
+    ...(Array.isArray(data.other_flights)
+      ? data.other_flights
+      : []),
+  ];
+
+  return rawFlights.map(
+    (offer, index) => {
+      const segments =
+        Array.isArray(offer.flights)
+          ? offer.flights
+          : [];
+
+      const compagnies = [
+        ...new Set(
+          segments
+            .map(
+              (flight) =>
+                flight.airline
+            )
+            .filter(Boolean)
+        ),
+      ];
+
+      return {
+        id: `return-${index}`,
+
+        airline:
+          compagnies.join(" + ") ||
+          "Compagnie aérienne",
+
+        price:
+          Number(offer.price) || null,
+
+        currency:
+          "EUR",
+
+        bookingToken:
+          offer.booking_token || "",
+
+        departureToken:
+          offer.departure_token || "",
+
+        flights:
+          segments,
+
+        layovers:
+          Array.isArray(
+            offer.layovers
+          )
+            ? offer.layovers
+            : [],
+      };
+    }
+  );
+}
 async function havenaGetBookingOptionsSerpApi(
   bookingToken
 ) {
@@ -6682,6 +6808,52 @@ app.post("/api/travel/search-flights", async (req, res) => {
     });
   }
 });
+app.post(
+  "/api/travel/return-flights",
+  async (req, res) => {
+    try {
+      const {
+        departureToken,
+      } = req.body || {};
+
+      if (!departureToken) {
+        return res
+          .status(400)
+          .json({
+            ok: false,
+            message:
+              "departureToken obligatoire",
+          });
+      }
+
+      const results =
+        await havenaGetReturnFlightsSerpApi(
+          departureToken
+        );
+
+      return res.json({
+        ok: true,
+        resultCount:
+          results.length,
+        results,
+      });
+    } catch (error) {
+      console.error(
+        "Erreur vols retour HAVENA :",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          ok: false,
+          message:
+            error?.message ||
+            "Erreur vols retour",
+        });
+    }
+  }
+);
 app.post(
   "/api/travel/booking-options",
   async (req, res) => {
