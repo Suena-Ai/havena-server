@@ -12,7 +12,11 @@ const {
 } = require("./flight-scraper");
 const { SOURCES_VOLS_HAVENA } = require("./flight-partners");
 dotenv.config();
-const { getSovrnApprovedMerchants } = require("./sovrn");
+const {
+  getSovrnApprovedMerchants,
+  findSovrnMerchantByName,
+  optimizeSovrnLink,
+} = require("./sovrn");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -6631,7 +6635,171 @@ url.searchParams.set(
 
   return options;
 }
+async function havenaResolveBookingDestination(
+  bookingUrl,
+  bookingPostData
+) {
+  if (!bookingUrl) {
+    return "";
+  }
 
+  if (!bookingPostData) {
+    return bookingUrl;
+  }
+
+  try {
+    const response = await fetch(
+      bookingUrl,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded;charset=UTF-8",
+
+          "User-Agent":
+            "Mozilla/5.0 HAVENA/1.0",
+        },
+
+        body: bookingPostData,
+
+        redirect: "follow",
+      }
+    );
+
+    return response.url || bookingUrl;
+  } catch (error) {
+    console.error(
+      "HAVENA résolution réservation :",
+      error.message
+    );
+
+    return bookingUrl;
+  }
+}
+
+
+async function havenaConnectBookingToSovrn(
+  option
+) {
+  const vendeur =
+    String(option?.vendeur || "").trim();
+
+  /*
+    1. Vérification que le vendeur
+       appartient bien au réseau Sovrn.
+  */
+
+  let sovrnMerchant = null;
+
+  try {
+    const matches =
+      await findSovrnMerchantByName(
+        vendeur
+      );
+
+    sovrnMerchant =
+      Array.isArray(matches) &&
+      matches.length > 0
+        ? matches[0]
+        : null;
+  } catch (error) {
+    console.error(
+      `Sovrn marchand ${vendeur} :`,
+      error.message
+    );
+  }
+
+  /*
+    2. Transformation de la redirection
+       Google Flights en destination vendeur.
+  */
+
+  const destinationUrl =
+    await havenaResolveBookingDestination(
+      option?.bookingUrl || "",
+      option?.bookingPostData || ""
+    );
+
+  /*
+    3. Création du lien affilié Sovrn.
+  */
+
+  let affiliation = {
+    affiliatable: false,
+    optimized: destinationUrl,
+    eepc: null,
+  };
+
+  if (
+    sovrnMerchant &&
+    destinationUrl
+  ) {
+    try {
+      affiliation =
+        await optimizeSovrnLink(
+          destinationUrl,
+          "FR"
+        );
+    } catch (error) {
+      console.error(
+        `Sovrn affiliation ${vendeur} :`,
+        error.message
+      );
+    }
+  }
+
+  return {
+    vendeur:
+      option.vendeur,
+
+    prix:
+      option.prix,
+
+    devise:
+      option.devise,
+
+    logos:
+      option.logos || [],
+
+    numerosVols:
+      option.numerosVols || [],
+
+    bagages:
+      option.bagages || [],
+
+    compagnieAerienne:
+      option.compagnieAerienne === true,
+
+    billetsSepares:
+      option.billetsSepares === true,
+
+    partenaireSovrn:
+      Boolean(sovrnMerchant),
+
+    marchandSovrn:
+      sovrnMerchant
+        ? {
+            nom:
+              sovrnMerchant.name || vendeur,
+
+            groupId:
+              sovrnMerchant.groupId || null,
+          }
+        : null,
+
+    lienReservation:
+      affiliation.optimized ||
+      destinationUrl ||
+      "",
+
+    lienAffilie:
+      affiliation.affiliatable === true,
+
+    eepc:
+      affiliation.eepc ?? null,
+  };
+}
 /* ------------------------------------------------------
    ORCHESTRATEUR HAVENA VOLS
 ------------------------------------------------------ */
@@ -6979,11 +7147,25 @@ app.post(
     adultes,
     enfants,
   });
+const optionsConnectees = [];
 
+for (const option of options) {
+  const optionConnectee =
+    await havenaConnectBookingToSovrn(
+      option
+    );
+
+  optionsConnectees.push(
+    optionConnectee
+  );
+}
       return res.json({
         ok: true,
-        resultCount: options.length,
-        options,
+        resultCount:
+  optionsConnectees.length,
+
+options:
+  optionsConnectees,
       });
     } catch (error) {
       console.error(
