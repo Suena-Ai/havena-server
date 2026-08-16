@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "main": "server.js",
   "type": "commonjs",
-  "scripts": {
-    "dev": "node server.js"
-  },
+"scripts": {
+  "dev": "node server.js",
+  "postinstall": "npx playwright install chromium"
+},
   "dependencies": {
     "@supabase/supabase-js": "^2.103.3",
     "bcryptjs": "^3.0.3",
