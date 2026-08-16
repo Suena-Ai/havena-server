@@ -10,6 +10,7 @@ const bcrypt = require("bcryptjs");
 const {
   rechercherVolsHAVENA,
 } = require("./flight-scraper");
+const { SOURCES_VOLS_HAVENA } = require("./flight-partners");
 dotenv.config();
 const { getSovrnApprovedMerchants } = require("./sovrn");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -6459,7 +6460,7 @@ app.post(
    HAVENA MASTER GUIDE - ROUTE RECHERCHE VOLS
 ====================================================== */
 
-const SOURCES_VOLS_HAVENA = [];
+
 
 app.post("/api/travel/search-flights", async (req, res) => {
   try {
