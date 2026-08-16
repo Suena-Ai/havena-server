@@ -7182,6 +7182,510 @@ options:
     }
   }
 );
+app.post(
+  "/api/travel/search-complete",
+  async (req, res) => {
+    try {
+      const {
+        depart,
+        destination,
+        dateAller,
+        dateRetour,
+        adultes = 1,
+        enfants = 0,
+      } = req.body || {};
+
+      if (
+        !depart ||
+        !destination ||
+        !dateAller ||
+        !dateRetour
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Départ, destination, date aller et date retour obligatoires.",
+        });
+      }
+
+      /* ==========================================
+         1. CODES AÉROPORTS
+      ========================================== */
+
+      const departureCode =
+        await havenaResolveAirportCode(
+          depart
+        );
+
+      const destinationCode =
+        await havenaResolveAirportCode(
+          destination
+        );
+
+      const search = {
+        departureCode,
+        destinationCode,
+        dateAller,
+        dateRetour,
+        adultes:
+          Math.max(
+            1,
+            Number(adultes) || 1
+          ),
+        enfants:
+          Math.max(
+            0,
+            Number(enfants) || 0
+          ),
+      };
+
+      /* ==========================================
+         2. RECHERCHE DES VOLS ALLER
+      ========================================== */
+
+      const outboundSource =
+        await havenaSearchFlightsSerpApi(
+          search
+        );
+
+      if (
+        !outboundSource?.available
+      ) {
+        throw new Error(
+          outboundSource?.error ||
+            "Recherche de vols indisponible."
+        );
+      }
+
+      const outboundFlights =
+        Array.isArray(
+          outboundSource.results
+        )
+          ? outboundSource.results
+          : [];
+
+      if (
+        outboundFlights.length === 0
+      ) {
+        return res.json({
+          ok: true,
+          recherche: {
+            depart,
+            destination,
+            departureCode,
+            destinationCode,
+            dateAller,
+            dateRetour,
+            adultes: search.adultes,
+            enfants: search.enfants,
+          },
+          nombreVols: 0,
+          offres: [],
+        });
+      }
+
+      /*
+        On travaille d'abord avec les offres
+        les moins chères.
+      */
+
+      const outboundCandidates =
+        outboundFlights
+          .filter(
+            (flight) =>
+              flight?.departureToken
+          )
+          .sort(
+            (a, b) =>
+              Number(
+                a?.price ||
+                  Infinity
+              ) -
+              Number(
+                b?.price ||
+                  Infinity
+              )
+          )
+          .slice(0, 5);
+
+      const offresFinales = [];
+
+      /* ==========================================
+         3. POUR CHAQUE ALLER :
+            RETOURS -> BOOKING OPTIONS
+      ========================================== */
+
+      for (
+        const outbound
+        of outboundCandidates
+      ) {
+        if (
+          offresFinales.length >= 12
+        ) {
+          break;
+        }
+
+        let returnFlights = [];
+
+        try {
+          returnFlights =
+            await havenaGetReturnFlightsSerpApi({
+              departureToken:
+                outbound.departureToken,
+
+              departureCode,
+
+              destinationCode,
+
+              dateAller,
+
+              dateRetour,
+
+              adultes:
+                search.adultes,
+
+              enfants:
+                search.enfants,
+            });
+        } catch (error) {
+          console.error(
+            "HAVENA retour ignoré :",
+            error.message
+          );
+
+          continue;
+        }
+
+        const returnCandidates =
+          (Array.isArray(returnFlights)
+            ? returnFlights
+            : [])
+            .filter(
+              (flight) =>
+                flight?.bookingToken
+            )
+            .slice(0, 4);
+
+        for (
+          const retour
+          of returnCandidates
+        ) {
+          if (
+            offresFinales.length >=
+            12
+          ) {
+            break;
+          }
+
+          let bookingOptions = [];
+
+          try {
+            bookingOptions =
+              await havenaGetBookingOptionsSerpApi({
+                bookingToken:
+                  retour.bookingToken,
+
+                departureCode,
+
+                destinationCode,
+
+                dateAller,
+
+                dateRetour,
+
+                adultes:
+                  search.adultes,
+
+                enfants:
+                  search.enfants,
+              });
+          } catch (error) {
+            console.error(
+              "HAVENA Booking Options ignorées :",
+              error.message
+            );
+
+            continue;
+          }
+
+          if (
+            !Array.isArray(
+              bookingOptions
+            ) ||
+            bookingOptions.length === 0
+          ) {
+            continue;
+          }
+
+          for (
+            const option
+            of bookingOptions
+          ) {
+            if (
+              offresFinales.length >=
+              12
+            ) {
+              break;
+            }
+
+            let connectee;
+
+            try {
+              connectee =
+                await havenaConnectBookingToSovrn(
+                  option
+                );
+            } catch (error) {
+              console.error(
+                "HAVENA Sovrn ignoré :",
+                error.message
+              );
+
+              /*
+                Même si Sovrn échoue,
+                on conserve l'offre.
+              */
+
+              connectee = {
+                vendeur:
+                  option?.vendeur ||
+                  "Vendeur",
+
+                prix:
+                  option?.prix ||
+                  retour?.price ||
+                  outbound?.price ||
+                  null,
+
+                devise:
+                  option?.devise ||
+                  "EUR",
+
+                partenaireSovrn:
+                  false,
+
+                lienAffilie:
+                  false,
+
+                lienReservation:
+                  option?.bookingUrl ||
+                  "",
+              };
+            }
+
+            offresFinales.push({
+              id:
+                `${outbound.departureToken?.slice(
+                  0,
+                  12
+                ) || "vol"}-${offresFinales.length}`,
+
+              compagnie:
+                outbound.airline ||
+                retour.airline ||
+                "Compagnie aérienne",
+
+              prix:
+                Number(
+                  connectee?.prix ||
+                    retour?.price ||
+                    outbound?.price
+                ) || null,
+
+              devise:
+                connectee?.devise ||
+                "EUR",
+
+              depart:
+                outbound.departureAirport ||
+                departureCode,
+
+              arrivee:
+                outbound.arrivalAirport ||
+                destinationCode,
+
+              heureDepart:
+                outbound.departureTime ||
+                "",
+
+              heureArrivee:
+                outbound.arrivalTime ||
+                "",
+
+              escales:
+                outbound.stops ??
+                (
+                  Array.isArray(
+                    outbound.layovers
+                  )
+                    ? outbound
+                        .layovers
+                        .length
+                    : null
+                ),
+
+              vendeur:
+                connectee?.vendeur ||
+                option?.vendeur ||
+                "",
+
+              partenaireSovrn:
+                connectee
+                  ?.partenaireSovrn ===
+                true,
+
+              lienAffilie:
+                connectee
+                  ?.lienAffilie ===
+                true,
+
+              lienReservation:
+                connectee
+                  ?.lienReservation ||
+                option?.bookingUrl ||
+                "",
+
+              numerosVols:
+                outbound.flightNumbers ||
+                option?.numerosVols ||
+                [],
+
+              bagages:
+                option?.bagages ||
+                [],
+
+              billetsSepares:
+                option
+                  ?.billetsSepares ===
+                true,
+            });
+          }
+
+          /*
+            Si cet itinéraire nous a déjà
+            donné des vendeurs, inutile de
+            multiplier les appels sur tous
+            les retours.
+          */
+
+          if (
+            bookingOptions.length > 0
+          ) {
+            break;
+          }
+        }
+      }
+
+      /* ==========================================
+         4. TRI + DÉDOUBLONNAGE
+      ========================================== */
+
+      const uniques = [];
+
+      const signatures =
+        new Set();
+
+      for (
+        const offre
+        of offresFinales
+      ) {
+        const signature = [
+          offre.vendeur,
+          offre.prix,
+          offre.compagnie,
+          offre.depart,
+          offre.arrivee,
+        ]
+          .join("|")
+          .toLowerCase();
+
+        if (
+          signatures.has(
+            signature
+          )
+        ) {
+          continue;
+        }
+
+        signatures.add(
+          signature
+        );
+
+        uniques.push(offre);
+      }
+
+      uniques.sort(
+        (a, b) =>
+          Number(
+            a.prix ||
+              Infinity
+          ) -
+          Number(
+            b.prix ||
+              Infinity
+          )
+      );
+
+      /* ==========================================
+         5. RÉPONSE UNIQUE POUR LE FRONT
+      ========================================== */
+
+      return res.json({
+        ok: true,
+
+        recherche: {
+          depart,
+          destination,
+
+          departureCode,
+          destinationCode,
+
+          dateAller,
+          dateRetour,
+
+          adultes:
+            search.adultes,
+
+          enfants:
+            search.enfants,
+        },
+
+        nombreVols:
+          outboundFlights.length,
+
+        nombreOffres:
+          uniques.length,
+
+        meilleurPrix:
+          uniques.length > 0
+            ? uniques[0]
+            : null,
+
+        offres:
+          uniques,
+
+        source:
+          "serpapi_google_flights",
+
+        checkedAt:
+          new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error(
+        "HAVENA SEARCH COMPLETE :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+
+        message:
+          error?.message ||
+          "Erreur recherche complète HAVENA.",
+      });
+    }
+  }
+);
 app.listen(PORT, () => {
   console.log(`HAVENA server lancé sur le port ${PORT}`);
 });
