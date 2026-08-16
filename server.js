@@ -6635,46 +6635,86 @@ url.searchParams.set(
 
   return options;
 }
+function havenaIsGoogleBookingRelay(url = "") {
+  const value = String(url || "").trim();
+
+  return (
+    value.includes("google.com/travel/clk/") ||
+    value.includes("google.fr/travel/clk/")
+  );
+}
+
 async function havenaResolveBookingDestination(
   bookingUrl,
   bookingPostData
 ) {
-  if (!bookingUrl) {
+  const url = String(bookingUrl || "").trim();
+  const postData = String(bookingPostData || "");
+
+  if (!url) {
     return "";
   }
 
-  if (!bookingPostData) {
-    return bookingUrl;
+  /*
+    Si SerpApi fournit seulement une URL directe vendeur
+    sans POST, elle peut être utilisée directement.
+  */
+  if (!postData) {
+    return havenaIsGoogleBookingRelay(url)
+      ? ""
+      : url;
   }
 
   try {
-    const response = await fetch(
-      bookingUrl,
-      {
-        method: "POST",
+    const response = await fetch(url, {
+      method: "POST",
 
-        headers: {
-          "Content-Type":
-            "application/x-www-form-urlencoded;charset=UTF-8",
+      headers: {
+        "Content-Type":
+          "application/x-www-form-urlencoded;charset=UTF-8",
 
-          "User-Agent":
-            "Mozilla/5.0 HAVENA/1.0",
-        },
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 
-        body: bookingPostData,
+        "Accept-Language":
+          "fr-FR,fr;q=0.9,en;q=0.8",
 
-        redirect: "follow",
-      }
-    );
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
+      },
 
-    return response.url || bookingUrl;
+      /*
+        IMPORTANT :
+        postData est envoyé exactement comme fourni
+        par SerpApi.
+      */
+      body: postData,
+
+      redirect: "follow",
+    });
+
+    const finalUrl =
+      String(response.url || "").trim();
+
+    /*
+      On ne renvoie JAMAIS au front le relais Google
+      /travel/clk/f comme s'il s'agissait d'un lien GET.
+    */
+    if (
+      !finalUrl ||
+      havenaIsGoogleBookingRelay(finalUrl)
+    ) {
+      return "";
+    }
+
+    return finalUrl;
   } catch (error) {
     console.error(
       "HAVENA résolution réservation :",
       error.message
     );
 
-    return bookingUrl;
+    return "";
   }
 }
 
@@ -6685,11 +6725,17 @@ async function havenaConnectBookingToSovrn(
   const vendeur =
     String(option?.vendeur || "").trim();
 
-  /*
-    1. Vérification que le vendeur
-       appartient bien au réseau Sovrn.
-  */
+  const bookingUrl =
+    String(option?.bookingUrl || "").trim();
 
+  const bookingPostData =
+    String(
+      option?.bookingPostData || ""
+    );
+
+  /*
+    1. Recherche du vendeur dans Sovrn
+  */
   let sovrnMerchant = null;
 
   try {
@@ -6711,23 +6757,22 @@ async function havenaConnectBookingToSovrn(
   }
 
   /*
-    2. Transformation de la redirection
-       Google Flights en destination vendeur.
+    2. Tentative de résolution vers
+       le véritable vendeur.
   */
-
   const destinationUrl =
     await havenaResolveBookingDestination(
-      option?.bookingUrl || "",
-      option?.bookingPostData || ""
+      bookingUrl,
+      bookingPostData
     );
 
   /*
-    3. Création du lien affilié Sovrn.
+    3. Affiliation Sovrn uniquement
+       lorsqu'on possède une vraie URL vendeur.
   */
-
   let affiliation = {
     affiliatable: false,
-    optimized: destinationUrl,
+    optimized: "",
     eepc: null,
   };
 
@@ -6749,30 +6794,50 @@ async function havenaConnectBookingToSovrn(
     }
   }
 
+  let lienReservation =
+    String(
+      affiliation?.optimized ||
+      destinationUrl ||
+      ""
+    ).trim();
+
+  /*
+    Sécurité :
+    jamais de /travel/clk/f envoyé comme
+    lien GET au navigateur.
+  */
+  if (
+    havenaIsGoogleBookingRelay(
+      lienReservation
+    )
+  ) {
+    lienReservation = "";
+  }
+
   return {
     vendeur:
-      option.vendeur,
+      option?.vendeur || vendeur,
 
     prix:
-      option.prix,
+      option?.prix ?? null,
 
     devise:
-      option.devise,
+      option?.devise || "EUR",
 
     logos:
-      option.logos || [],
+      option?.logos || [],
 
     numerosVols:
-      option.numerosVols || [],
+      option?.numerosVols || [],
 
     bagages:
-      option.bagages || [],
+      option?.bagages || [],
 
     compagnieAerienne:
-      option.compagnieAerienne === true,
+      option?.compagnieAerienne === true,
 
     billetsSepares:
-      option.billetsSepares === true,
+      option?.billetsSepares === true,
 
     partenaireSovrn:
       Boolean(sovrnMerchant),
@@ -6781,23 +6846,44 @@ async function havenaConnectBookingToSovrn(
       sovrnMerchant
         ? {
             nom:
-              sovrnMerchant.name || vendeur,
+              sovrnMerchant.name ||
+              vendeur,
 
             groupId:
-              sovrnMerchant.groupId || null,
+              sovrnMerchant.groupId ||
+              null,
           }
         : null,
 
-    lienReservation:
-      affiliation.optimized ||
-      destinationUrl ||
-      "",
+    /*
+      Lien direct/affilié utilisable
+      immédiatement quand disponible.
+    */
+    lienReservation,
 
     lienAffilie:
-      affiliation.affiliatable === true,
+      affiliation?.affiliatable === true,
 
     eepc:
-      affiliation.eepc ?? null,
+      affiliation?.eepc ?? null,
+
+    /*
+      IMPORTANT :
+      on conserve aussi la réservation
+      POST originale SerpApi.
+
+      Le front pourra donc réserver même
+      lorsque Google ne fournit pas de
+      lien GET direct.
+    */
+    bookingUrl,
+
+    bookingPostData,
+
+    bookingMethod:
+      bookingPostData
+        ? "POST"
+        : "GET",
   };
 }
 /* ------------------------------------------------------
@@ -7306,7 +7392,7 @@ app.post(
                   Infinity
               )
           )
-          .slice(0, 5);
+          .slice(0, 10);
 
       const offresFinales = [];
 
@@ -7320,7 +7406,7 @@ app.post(
         of outboundCandidates
       ) {
         if (
-          offresFinales.length >= 12
+          offresFinales.length >= 30
         ) {
           break;
         }
@@ -7364,7 +7450,7 @@ app.post(
               (flight) =>
                 flight?.bookingToken
             )
-            .slice(0, 4);
+            .slice(0, 6);
 
         for (
           const retour
@@ -7447,30 +7533,48 @@ app.post(
               */
 
               connectee = {
-                vendeur:
-                  option?.vendeur ||
-                  "Vendeur",
+  vendeur:
+    option?.vendeur ||
+    "Vendeur",
 
-                prix:
-                  option?.prix ||
-                  retour?.price ||
-                  outbound?.price ||
-                  null,
+  prix:
+    option?.prix ||
+    retour?.price ||
+    outbound?.price ||
+    null,
 
-                devise:
-                  option?.devise ||
-                  "EUR",
+  devise:
+    option?.devise ||
+    "EUR",
 
-                partenaireSovrn:
-                  false,
+  partenaireSovrn:
+    false,
 
-                lienAffilie:
-                  false,
+  lienAffilie:
+    false,
 
-                lienReservation:
-                  option?.bookingUrl ||
-                  "",
-              };
+  /*
+    Surtout pas le relais Google
+    comme lien GET.
+  */
+  lienReservation:
+    havenaIsGoogleBookingRelay(
+      option?.bookingUrl || ""
+    )
+      ? ""
+      : option?.bookingUrl || "",
+
+  bookingUrl:
+    option?.bookingUrl || "",
+
+  bookingPostData:
+    option?.bookingPostData || "",
+
+  bookingMethod:
+    option?.bookingPostData
+      ? "POST"
+      : "GET",
+};
             }
 
             offresFinales.push({
@@ -7539,11 +7643,27 @@ app.post(
                   ?.lienAffilie ===
                 true,
 
-              lienReservation:
-                connectee
-                  ?.lienReservation ||
-                option?.bookingUrl ||
-                "",
+             lienReservation:
+  connectee?.lienReservation ||
+  "",
+
+bookingUrl:
+  connectee?.bookingUrl ||
+  option?.bookingUrl ||
+  "",
+
+bookingPostData:
+  connectee?.bookingPostData ||
+  option?.bookingPostData ||
+  "",
+
+bookingMethod:
+  connectee?.bookingMethod ||
+  (
+    option?.bookingPostData
+      ? "POST"
+      : "GET"
+  ),
 
               numerosVols:
                 outbound.flightNumbers ||
