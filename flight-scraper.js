@@ -211,14 +211,15 @@ if (!robotAutorise) {
     lien: searchUrl,
   };
 }
-    browser = await chromium.launch({
-      headless: true,
+   browser = await chromium.launch({
+  headless: true,
 
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-      ],
-    });
+  args: [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-http2",
+  ],
+});
 
     const context =
       await browser.newContext({
