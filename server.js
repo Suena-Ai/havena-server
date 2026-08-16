@@ -6343,7 +6343,7 @@ async function havenaRunFlightSources(search) {
 ------------------------------------------------------ */
 
 app.post(
-  "/api/travel/search-flights",
+ "/api/travel/search-flights-serpapi",
   async (req, res) => {
     try {
       const {
@@ -6462,7 +6462,7 @@ app.post(
 
 
 
-app.post("/api/travel/search-flights-serpapi", async (req, res) => {
+app.post("/api/travel/search-flights", async (req, res) => {
   try {
     const {
       depart,
