@@ -6251,11 +6251,14 @@ async function havenaSearchFlightsSerpApi({
         type:
           offer.type || "",
 
-        departureToken:
-          offer.departure_token || "",
+       departureToken:
+  offer.departure_token || "",
 
-        checkedAt:
-          new Date().toISOString(),
+bookingToken:
+  offer.booking_token || "",
+
+checkedAt:
+  new Date().toISOString(),
       };
     })
     .filter(Boolean);
@@ -6267,7 +6270,160 @@ async function havenaSearchFlightsSerpApi({
     results,
   };
 }
+async function havenaGetBookingOptionsSerpApi(
+  bookingToken
+) {
+  const apiKey = String(
+    process.env.SERPAPI_API_KEY || ""
+  ).trim();
 
+  if (!apiKey) {
+    throw new Error(
+      "SERPAPI_API_KEY manquante"
+    );
+  }
+
+  if (!bookingToken) {
+    return [];
+  }
+
+  const url = new URL(
+    "https://serpapi.com/search.json"
+  );
+
+  url.searchParams.set(
+    "engine",
+    "google_flights"
+  );
+
+  url.searchParams.set(
+    "booking_token",
+    bookingToken
+  );
+
+  url.searchParams.set(
+    "currency",
+    "EUR"
+  );
+
+  url.searchParams.set(
+    "hl",
+    "fr"
+  );
+
+  url.searchParams.set(
+    "gl",
+    "fr"
+  );
+
+  url.searchParams.set(
+    "api_key",
+    apiKey
+  );
+
+  const response =
+    await fetch(url.toString());
+
+  if (!response.ok) {
+    const details =
+      await response.text();
+
+    throw new Error(
+      `Erreur Booking Options SerpApi ${response.status}: ${details}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  const bookingOptions =
+    Array.isArray(
+      data.booking_options
+    )
+      ? data.booking_options
+      : [];
+
+  const options = [];
+
+  for (const option of bookingOptions) {
+    const seller =
+      option?.together;
+
+    if (!seller) {
+      continue;
+    }
+
+    const prixEUR =
+      Array.isArray(
+        seller.local_prices
+      )
+        ? seller.local_prices.find(
+            (item) =>
+              item?.currency === "EUR"
+          )
+        : null;
+
+    options.push({
+      vendeur:
+        seller.book_with ||
+        "Vendeur",
+
+      prix:
+        Number(
+          prixEUR?.price ??
+          seller.price
+        ) || null,
+
+      devise:
+        prixEUR
+          ? "EUR"
+          : "EUR",
+
+      logos:
+        Array.isArray(
+          seller.airline_logos
+        )
+          ? seller.airline_logos
+          : [],
+
+      numerosVols:
+        Array.isArray(
+          seller.marketed_as
+        )
+          ? seller.marketed_as
+          : [],
+
+      compagnieAerienne:
+        seller.airline === true,
+
+      bagages:
+        Array.isArray(
+          seller.baggage_prices
+        )
+          ? seller.baggage_prices
+          : [],
+
+      bookingUrl:
+        seller?.booking_request?.url ||
+        "",
+
+      bookingPostData:
+        seller?.booking_request?.post_data ||
+        "",
+
+      billetsSepares:
+        option?.separate_tickets === true,
+    });
+  }
+
+  options.sort(
+    (a, b) =>
+      Number(a.prix || Infinity) -
+      Number(b.prix || Infinity)
+  );
+
+  return options;
+}
 
 /* ------------------------------------------------------
    ORCHESTRATEUR HAVENA VOLS
@@ -6526,6 +6682,44 @@ app.post("/api/travel/search-flights", async (req, res) => {
     });
   }
 });
+app.post(
+  "/api/travel/booking-options",
+  async (req, res) => {
+    try {
+      const { bookingToken } = req.body || {};
+
+      if (!bookingToken) {
+        return res.status(400).json({
+          ok: false,
+          message: "bookingToken obligatoire",
+        });
+      }
+
+      const options =
+        await havenaGetBookingOptionsSerpApi(
+          bookingToken
+        );
+
+      return res.json({
+        ok: true,
+        resultCount: options.length,
+        options,
+      });
+    } catch (error) {
+      console.error(
+        "Erreur Booking Options HAVENA :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message:
+          error?.message ||
+          "Erreur Booking Options",
+      });
+    }
+  }
+);
 app.listen(PORT, () => {
   console.log(`HAVENA server lancé sur le port ${PORT}`);
 });
