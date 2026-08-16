@@ -11,14 +11,39 @@ const {
   rechercherVolsHAVENA,
 } = require("./flight-scraper");
 dotenv.config();
-
+const { getSovrnApprovedMerchants } = require("./sovrn");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
 const FRONTEND_URL = "https://www.havena1.fr";
 const BACKEND_URL = "https://havena-server.onrender.com";
+// ======================================================
+// SOVRN - TEST DES MARCHANDS APPROUVES VOYAGE
+// ======================================================
 
+app.get("/api/sovrn/merchants-test", async (req, res) => {
+  try {
+    const data = await getSovrnApprovedMerchants({
+      category: "TV",
+      page: 1,
+      pageSize: 50,
+    });
+
+    return res.status(200).json({
+      ok: true,
+      category: "TV",
+      data,
+    });
+  } catch (error) {
+    console.error("Erreur API Sovrn :", error);
+
+    return res.status(500).json({
+      ok: false,
+      message: error.message,
+    });
+  }
+});
 const RESET_PASSWORD_SECRET =
   process.env.RESET_PASSWORD_SECRET ||
   process.env.STRIPE_WEBHOOK_SECRET ||
