@@ -6438,9 +6438,15 @@ async function havenaGetReturnFlightsSerpApi({
     }
   );
 }
-async function havenaGetBookingOptionsSerpApi(
-  bookingToken
-) {
+async function havenaGetBookingOptionsSerpApi({
+  bookingToken,
+  departureCode,
+  destinationCode,
+  dateAller,
+  dateRetour,
+  adultes = 1,
+  enfants = 0,
+}) {
   const apiKey = String(
     process.env.SERPAPI_API_KEY || ""
   ).trim();
@@ -6463,7 +6469,40 @@ async function havenaGetBookingOptionsSerpApi(
     "engine",
     "google_flights"
   );
+url.searchParams.set(
+  "departure_id",
+  departureCode
+);
 
+url.searchParams.set(
+  "arrival_id",
+  destinationCode
+);
+
+url.searchParams.set(
+  "outbound_date",
+  dateAller
+);
+
+url.searchParams.set(
+  "return_date",
+  dateRetour
+);
+
+url.searchParams.set(
+  "type",
+  "1"
+);
+
+url.searchParams.set(
+  "adults",
+  String(Math.max(1, Number(adultes) || 1))
+);
+
+url.searchParams.set(
+  "children",
+  String(Math.max(0, Number(enfants) || 0))
+);
   url.searchParams.set(
     "booking_token",
     bookingToken
@@ -6913,7 +6952,15 @@ app.post(
   "/api/travel/booking-options",
   async (req, res) => {
     try {
-      const { bookingToken } = req.body || {};
+     const {
+  bookingToken,
+  departureCode,
+  destinationCode,
+  dateAller,
+  dateRetour,
+  adultes = 1,
+  enfants = 0,
+} = req.body || {};
 
       if (!bookingToken) {
         return res.status(400).json({
@@ -6923,9 +6970,15 @@ app.post(
       }
 
       const options =
-        await havenaGetBookingOptionsSerpApi(
-          bookingToken
-        );
+  await havenaGetBookingOptionsSerpApi({
+    bookingToken,
+    departureCode,
+    destinationCode,
+    dateAller,
+    dateRetour,
+    adultes,
+    enfants,
+  });
 
       return res.json({
         ok: true,
