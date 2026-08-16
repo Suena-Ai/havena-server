@@ -6270,9 +6270,15 @@ checkedAt:
     results,
   };
 }
-async function havenaGetReturnFlightsSerpApi(
-  departureToken
-) {
+async function havenaGetReturnFlightsSerpApi({
+  departureToken,
+  departureCode,
+  destinationCode,
+  dateAller,
+  dateRetour,
+  adultes = 1,
+  enfants = 0,
+}) {
   const apiKey = String(
     process.env.SERPAPI_API_KEY || ""
   ).trim();
@@ -6283,8 +6289,16 @@ async function havenaGetReturnFlightsSerpApi(
     );
   }
 
-  if (!departureToken) {
-    return [];
+  if (
+    !departureToken ||
+    !departureCode ||
+    !destinationCode ||
+    !dateAller ||
+    !dateRetour
+  ) {
+    throw new Error(
+      "Paramètres du vol retour incomplets"
+    );
   }
 
   const url = new URL(
@@ -6297,8 +6311,38 @@ async function havenaGetReturnFlightsSerpApi(
   );
 
   url.searchParams.set(
-    "departure_token",
-    departureToken
+    "departure_id",
+    departureCode
+  );
+
+  url.searchParams.set(
+    "arrival_id",
+    destinationCode
+  );
+
+  url.searchParams.set(
+    "outbound_date",
+    dateAller
+  );
+
+  url.searchParams.set(
+    "return_date",
+    dateRetour
+  );
+
+  url.searchParams.set(
+    "type",
+    "1"
+  );
+
+  url.searchParams.set(
+    "adults",
+    String(Math.max(1, Number(adultes) || 1))
+  );
+
+  url.searchParams.set(
+    "children",
+    String(Math.max(0, Number(enfants) || 0))
   );
 
   url.searchParams.set(
@@ -6314,6 +6358,11 @@ async function havenaGetReturnFlightsSerpApi(
   url.searchParams.set(
     "gl",
     "fr"
+  );
+
+  url.searchParams.set(
+    "departure_token",
+    departureToken
   );
 
   url.searchParams.set(
@@ -6374,22 +6423,15 @@ async function havenaGetReturnFlightsSerpApi(
         price:
           Number(offer.price) || null,
 
-        currency:
-          "EUR",
+        currency: "EUR",
 
         bookingToken:
           offer.booking_token || "",
 
-        departureToken:
-          offer.departure_token || "",
-
-        flights:
-          segments,
+        flights: segments,
 
         layovers:
-          Array.isArray(
-            offer.layovers
-          )
+          Array.isArray(offer.layovers)
             ? offer.layovers
             : [],
       };
@@ -6814,27 +6856,42 @@ app.post(
     try {
       const {
         departureToken,
+        departureCode,
+        destinationCode,
+        dateAller,
+        dateRetour,
+        adultes = 1,
+        enfants = 0,
       } = req.body || {};
 
-      if (!departureToken) {
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            message:
-              "departureToken obligatoire",
-          });
+      if (
+        !departureToken ||
+        !departureCode ||
+        !destinationCode ||
+        !dateAller ||
+        !dateRetour
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Paramètres du vol retour incomplets",
+        });
       }
 
       const results =
-        await havenaGetReturnFlightsSerpApi(
-          departureToken
-        );
+        await havenaGetReturnFlightsSerpApi({
+          departureToken,
+          departureCode,
+          destinationCode,
+          dateAller,
+          dateRetour,
+          adultes,
+          enfants,
+        });
 
       return res.json({
         ok: true,
-        resultCount:
-          results.length,
+        resultCount: results.length,
         results,
       });
     } catch (error) {
@@ -6843,14 +6900,12 @@ app.post(
         error
       );
 
-      return res
-        .status(500)
-        .json({
-          ok: false,
-          message:
-            error?.message ||
-            "Erreur vols retour",
-        });
+      return res.status(500).json({
+        ok: false,
+        message:
+          error?.message ||
+          "Erreur vols retour",
+      });
     }
   }
 );
