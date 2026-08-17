@@ -6098,10 +6098,20 @@ async function havenaSearchFlightsSerpApi({
     "fr"
   );
 
-  url.searchParams.set(
-    "gl",
-    "fr"
-  );
+url.searchParams.set(
+  "gl",
+  "fr"
+);
+
+url.searchParams.set(
+  "show_hidden",
+  "true"
+);
+
+url.searchParams.set(
+  "deep_search",
+  "true"
+);
 
   // Prix les moins chers en premier
   url.searchParams.set(
@@ -7458,7 +7468,7 @@ app.post(
         ) {
           if (
             offresFinales.length >=
-            12
+            30
           ) {
             break;
           }
@@ -7509,7 +7519,7 @@ app.post(
           ) {
             if (
               offresFinales.length >=
-              12
+              30
             ) {
               break;
             }
