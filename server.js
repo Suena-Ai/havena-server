@@ -24,6 +24,837 @@ const upload = multer({ storage: multer.memoryStorage() });
 const FRONTEND_URL = "https://www.havena1.fr";
 const BACKEND_URL = "https://havena-server.onrender.com";
 // ======================================================
+// RATEHAWK / ETG API
+// ======================================================
+
+const RATEHAWK_API_BASE = String(
+  process.env.RATEHAWK_API_BASE || ""
+).replace(/\/+$/, "");
+
+const RATEHAWK_KEY_ID = String(
+  process.env.RATEHAWK_KEY_ID || ""
+).trim();
+
+const RATEHAWK_API_KEY = String(
+  process.env.RATEHAWK_API_KEY || ""
+).trim();
+
+const RATEHAWK_MANAGER_EMAIL = String(
+  process.env.RATEHAWK_MANAGER_EMAIL ||
+  process.env.MAIL_USER ||
+  ""
+).trim();
+
+const RATEHAWK_MANAGER_PHONE = String(
+  process.env.RATEHAWK_MANAGER_PHONE || ""
+).trim();
+
+function getRateHawkHeaders() {
+  if (
+    !RATEHAWK_API_BASE ||
+    !RATEHAWK_KEY_ID ||
+    !RATEHAWK_API_KEY
+  ) {
+    throw new Error(
+      "Configuration RateHawk incomplète."
+    );
+  }
+
+  const credentials = Buffer.from(
+    `${RATEHAWK_KEY_ID}:${RATEHAWK_API_KEY}`
+  ).toString("base64");
+
+  return {
+    Authorization: `Basic ${credentials}`,
+    "Content-Type": "application/json",
+  };
+}
+
+function getRateHawkManager() {
+  if (
+    !RATEHAWK_MANAGER_EMAIL ||
+    !RATEHAWK_MANAGER_PHONE
+  ) {
+    throw new Error(
+      "RATEHAWK_MANAGER_EMAIL ou RATEHAWK_MANAGER_PHONE manquant dans Render."
+    );
+  }
+
+  return {
+    email: RATEHAWK_MANAGER_EMAIL,
+    phone: RATEHAWK_MANAGER_PHONE,
+  };
+}
+
+function normalizeRateHawkHids(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return [
+    ...new Set(
+      values
+        .map((value) => Number(value))
+        .filter(
+          (value) =>
+            Number.isInteger(value) &&
+            value > 0 &&
+            value <= 9999999999
+        )
+    ),
+  ];
+}
+
+function requireRateHawkSyncSecret(req) {
+  const expected = String(
+    process.env.HAVENA_SYNC_SECRET || ""
+  ).trim();
+
+  const received = String(
+    req.headers["x-havena-sync-secret"] || ""
+  ).trim();
+
+  return Boolean(
+    expected &&
+    received &&
+    received === expected
+  );
+}
+
+// ======================================================
+// RATEHAWK - DONNEES STATIQUES
+// ======================================================
+
+async function getRateHawkHotelStaticData() {
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/b2b/v3/hotel/static/`,
+    {
+      method: "GET",
+      headers: getRateHawkHeaders(),
+    }
+  );
+
+  const data = await response.json();
+
+  if (
+    !response.ok ||
+    data?.status === "error"
+  ) {
+    throw new Error(
+      data?.error ||
+      `Erreur RateHawk ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+async function getRateHawkFilterValues() {
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/content/v1/filter_values`,
+    {
+      method: "GET",
+      headers: getRateHawkHeaders(),
+    }
+  );
+
+  const data = await response.json();
+
+  if (
+    !response.ok ||
+    data?.status === "error"
+  ) {
+    throw new Error(
+      data?.error ||
+      `Erreur RateHawk ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+async function getRateHawkHotelIdsByFilter({
+  updatedSince = null,
+  country = [],
+  serpFilter = [],
+  starRating = [],
+  kind = [],
+  supplierType = null,
+  preferable = null,
+  top = null,
+} = {}) {
+  const body = {};
+
+  if (updatedSince) {
+    body.updated_since =
+      String(updatedSince);
+  }
+
+  if (
+    Array.isArray(country) &&
+    country.length > 0
+  ) {
+    body.country = country
+      .map((value) => Number(value))
+      .filter(Number.isInteger);
+  }
+
+  if (
+    Array.isArray(serpFilter) &&
+    serpFilter.length > 0
+  ) {
+    body.serp_filter = serpFilter
+      .map((value) =>
+        String(value).trim()
+      )
+      .filter(Boolean);
+  }
+
+  if (
+    Array.isArray(starRating) &&
+    starRating.length > 0
+  ) {
+    body.star_rating = starRating
+      .map((value) => Number(value))
+      .filter(Number.isInteger);
+  }
+
+  if (
+    Array.isArray(kind) &&
+    kind.length > 0
+  ) {
+    body.kind = kind
+      .map((value) =>
+        String(value).trim()
+      )
+      .filter(Boolean);
+  }
+
+  if (supplierType) {
+    body.supplier_type =
+      String(supplierType).trim();
+  }
+
+  if (
+    typeof preferable === "boolean"
+  ) {
+    body.preferable = preferable;
+  }
+
+  if (typeof top === "boolean") {
+    body.top = top;
+  }
+
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/content/v1/hotel_ids_by_filter/`,
+    {
+      method: "POST",
+      headers: getRateHawkHeaders(),
+      body: JSON.stringify(body),
+    }
+  );
+
+  const data = await response.json();
+
+  if (
+    !response.ok ||
+    data?.status === "error"
+  ) {
+    throw new Error(
+      data?.error ||
+      `Erreur RateHawk ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+async function getRateHawkHotelContentByIds({
+  hids,
+  language = "en",
+}) {
+  const cleanHids =
+    normalizeRateHawkHids(hids);
+
+  if (
+    cleanHids.length === 0 ||
+    cleanHids.length > 100
+  ) {
+    throw new Error(
+      "RateHawk : hids requis, maximum 100 par requête."
+    );
+  }
+
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/content/v1/hotel_content_by_ids/`,
+    {
+      method: "POST",
+      headers: getRateHawkHeaders(),
+      body: JSON.stringify({
+        hids: cleanHids,
+        language,
+      }),
+    }
+  );
+
+  const data = await response.json();
+
+  if (
+    !response.ok ||
+    data?.status === "error"
+  ) {
+    throw new Error(
+      data?.error ||
+      `Erreur RateHawk ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+// ======================================================
+// RATEHAWK - STOCKAGE SUPABASE
+// ======================================================
+
+async function saveRateHawkMetadata(
+  key,
+  payload
+) {
+  const { error } = await supabase
+    .from("ratehawk_metadata")
+    .upsert(
+      {
+        key,
+        payload,
+        synced_at:
+          new Date().toISOString(),
+      },
+      {
+        onConflict: "key",
+      }
+    );
+
+  if (error) {
+    throw new Error(
+      `Supabase RateHawk metadata : ${error.message}`
+    );
+  }
+}
+
+async function saveRateHawkHotelContent(
+  hotels
+) {
+  const rows = (
+    Array.isArray(hotels)
+      ? hotels
+      : []
+  )
+    .filter(
+      (hotel) =>
+        Number.isInteger(
+          Number(hotel?.hid)
+        ) &&
+        Number(hotel?.hid) > 0
+    )
+    .map((hotel) => ({
+      hid: Number(hotel.hid),
+      content: hotel,
+      synced_at:
+        new Date().toISOString(),
+    }));
+
+  if (rows.length === 0) {
+    return 0;
+  }
+
+  const { error } = await supabase
+    .from(
+      "ratehawk_hotel_content"
+    )
+    .upsert(rows, {
+      onConflict: "hid",
+    });
+
+  if (error) {
+    throw new Error(
+      `Supabase RateHawk hôtels : ${error.message}`
+    );
+  }
+
+  return rows.length;
+}
+
+// ======================================================
+// RATEHAWK - SUGGESTIONS DESTINATIONS
+// ======================================================
+
+async function suggestRateHawkHotelAndRegion({
+  query,
+  language = "en",
+}) {
+  const cleanQuery =
+    String(query || "").trim();
+
+  if (!cleanQuery) {
+    throw new Error(
+      "RateHawk : destination manquante."
+    );
+  }
+
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/b2b/v3/search/multicomplete/`,
+    {
+      method: "POST",
+      headers: getRateHawkHeaders(),
+      body: JSON.stringify({
+        query: cleanQuery,
+        language,
+      }),
+    }
+  );
+
+  const data = await response.json();
+
+  if (
+    !response.ok ||
+    data?.status === "error"
+  ) {
+    throw new Error(
+      data?.error ||
+      `Erreur RateHawk ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+// ======================================================
+// RATEHAWK - RECHERCHE PAR REGION
+// ======================================================
+
+async function searchRateHawkHotelsByRegion({
+  checkin,
+  checkout,
+  regionId,
+  residency,
+  guests,
+  currency = "EUR",
+}) {
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/b2b/v3/search/serp/region/`,
+    {
+      method: "POST",
+      headers: getRateHawkHeaders(),
+      body: JSON.stringify({
+        checkin,
+        checkout,
+        residency,
+        language: "en",
+        guests,
+        region_id:
+          Number(regionId),
+        currency,
+      }),
+    }
+  );
+
+  const data = await response.json();
+
+  if (
+    !response.ok ||
+    data?.status === "error"
+  ) {
+    throw new Error(
+      data?.error ||
+      `Erreur RateHawk ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+// ======================================================
+// RATEHAWK - HOTELPAGE
+// ======================================================
+
+async function getRateHawkHotelPage({
+  checkin,
+  checkout,
+  residency,
+  guests,
+  hid,
+  currency = "EUR",
+}) {
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/b2b/v3/search/hp/`,
+    {
+      method: "POST",
+      headers: getRateHawkHeaders(),
+      body: JSON.stringify({
+        checkin,
+        checkout,
+        residency,
+        language: "en",
+        guests,
+        hid: Number(hid),
+        currency,
+      }),
+    }
+  );
+
+  const data = await response.json();
+
+  if (
+    !response.ok ||
+    data?.status === "error"
+  ) {
+    throw new Error(
+      data?.error ||
+      `Erreur RateHawk ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+// ======================================================
+// RATEHAWK - PREBOOK
+// ======================================================
+
+async function prebookRateHawkHotel({
+  hash,
+  priceIncreasePercent = null,
+}) {
+  if (!hash) {
+    throw new Error(
+      "RateHawk : hash de réservation manquant."
+    );
+  }
+
+  const body = {
+    hash,
+  };
+
+  if (
+    priceIncreasePercent !== null &&
+    priceIncreasePercent !== undefined
+  ) {
+    body.price_increase_percent =
+      Number(
+        priceIncreasePercent
+      );
+  }
+
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/b2b/v3/hotel/prebook/`,
+    {
+      method: "POST",
+      headers: getRateHawkHeaders(),
+      body: JSON.stringify(body),
+    }
+  );
+
+  const data = await response.json();
+
+  if (
+    !response.ok ||
+    data?.status === "error"
+  ) {
+    throw new Error(
+      data?.error ||
+      `Erreur RateHawk ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+// ======================================================
+// RATEHAWK - CREATE BOOKING
+// ======================================================
+
+async function createRateHawkBookingProcess({
+  partnerOrderId,
+  bookHash,
+  userIp,
+}) {
+  let currentPartnerOrderId =
+    partnerOrderId ||
+    crypto.randomUUID();
+
+  for (
+    let attempt = 1;
+    attempt <= 10;
+    attempt += 1
+  ) {
+    const response = await fetch(
+      `${RATEHAWK_API_BASE}/api/b2b/v3/hotel/order/booking/form/`,
+      {
+        method: "POST",
+        headers:
+          getRateHawkHeaders(),
+        body: JSON.stringify({
+          partner_order_id:
+            currentPartnerOrderId,
+          book_hash: bookHash,
+          language: "en",
+          user_ip: userIp,
+        }),
+      }
+    );
+
+    let data = null;
+
+    try {
+      data =
+        await response.json();
+    } catch (error) {
+      data = null;
+    }
+
+    if (
+      response.ok &&
+      data?.status === "ok"
+    ) {
+      return {
+        ...data,
+        partner_order_id:
+          currentPartnerOrderId,
+      };
+    }
+
+    const retryable =
+      response.status >= 500 ||
+      data?.error === "timeout" ||
+      data?.error === "unknown" ||
+      data?.error ===
+        "duplicate_reservation" ||
+      data?.error ===
+        "double_booking_form";
+
+    if (!retryable) {
+      throw new Error(
+        data?.error ||
+        `Erreur RateHawk ${response.status}`
+      );
+    }
+
+    currentPartnerOrderId =
+      crypto.randomUUID();
+  }
+
+  throw new Error(
+    "RateHawk : échec du Create booking process après 10 tentatives."
+  );
+}
+
+// ======================================================
+// RATEHAWK - START BOOKING
+// ======================================================
+
+async function startRateHawkBookingProcess({
+  partnerOrderId,
+  user,
+  rooms,
+  paymentType,
+  supplierData = null,
+  partnerComment = null,
+  amountSellB2b2c = null,
+}) {
+  const body = {
+    user,
+    partner: {
+      partner_order_id:
+        partnerOrderId,
+    },
+    language: "en",
+    rooms,
+    payment_type:
+      paymentType,
+  };
+
+  if (supplierData) {
+    body.supplier_data =
+      supplierData;
+  }
+
+  if (partnerComment) {
+    body.partner.comment =
+      String(
+        partnerComment
+      ).slice(0, 256);
+  }
+
+  if (
+    amountSellB2b2c !== null &&
+    amountSellB2b2c !== undefined
+  ) {
+    body.partner.amount_sell_b2b2c =
+      String(
+        amountSellB2b2c
+      );
+  }
+
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/b2b/v3/hotel/order/booking/finish/`,
+    {
+      method: "POST",
+      headers:
+        getRateHawkHeaders(),
+      body:
+        JSON.stringify(body),
+    }
+  );
+
+  let data = null;
+
+  try {
+    data =
+      await response.json();
+  } catch (error) {
+    data = null;
+  }
+
+  if (
+    data?.status === "ok" ||
+    data?.error === "timeout" ||
+    data?.error === "unknown" ||
+    response.status >= 500
+  ) {
+    return {
+      ...data,
+      mustCheckStatus: true,
+    };
+  }
+
+  throw new Error(
+    data?.error ||
+    `Erreur RateHawk ${response.status}`
+  );
+}
+
+// ======================================================
+// RATEHAWK - CHECK BOOKING
+// ======================================================
+
+async function checkRateHawkBookingProcess({
+  partnerOrderId,
+}) {
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/b2b/v3/hotel/order/booking/finish/status/`,
+    {
+      method: "POST",
+      headers:
+        getRateHawkHeaders(),
+      body: JSON.stringify({
+        partner_order_id:
+          partnerOrderId,
+      }),
+    }
+  );
+
+  let data = null;
+
+  try {
+    data =
+      await response.json();
+  } catch (error) {
+    data = null;
+  }
+
+  if (
+    response.status >= 500
+  ) {
+    return {
+      status: "processing",
+      error:
+        `HTTP ${response.status}`,
+      mustCheckStatus: true,
+    };
+  }
+
+  if (
+    data?.status ===
+      "processing" ||
+    data?.error ===
+      "timeout" ||
+    data?.error ===
+      "unknown"
+  ) {
+    return {
+      ...data,
+      mustCheckStatus: true,
+    };
+  }
+
+  return {
+    ...data,
+    mustCheckStatus: false,
+  };
+}
+
+// ======================================================
+// RATEHAWK - ANNULATION
+// ======================================================
+
+async function cancelRateHawkBooking({
+  partnerOrderId,
+}) {
+  if (!partnerOrderId) {
+    throw new Error(
+      "RateHawk : partner_order_id manquant."
+    );
+  }
+
+  for (
+    let attempt = 1;
+    attempt <= 2;
+    attempt += 1
+  ) {
+    const response =
+      await fetch(
+        `${RATEHAWK_API_BASE}/api/b2b/v3/hotel/order/cancel/`,
+        {
+          method: "POST",
+          headers:
+            getRateHawkHeaders(),
+          body: JSON.stringify({
+            partner_order_id:
+              partnerOrderId,
+          }),
+        }
+      );
+
+    let data = null;
+
+    try {
+      data =
+        await response.json();
+    } catch (error) {
+      data = null;
+    }
+
+    if (
+      response.ok &&
+      data?.status !== "error"
+    ) {
+      return data;
+    }
+
+    if (
+      data?.error === "timeout" &&
+      attempt === 1
+    ) {
+      continue;
+    }
+
+    throw new Error(
+      data?.error ||
+      `Erreur RateHawk ${response.status}`
+    );
+  }
+}
+// ======================================================
 // SOVRN - TEST DES MARCHANDS APPROUVES VOYAGE
 // ======================================================
 
@@ -664,7 +1495,843 @@ app.post(
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+// ======================================================
+// RATEHAWK - SYNCHRONISATION DONNEES STATIQUES
+// ======================================================
 
+app.post(
+  "/api/ratehawk/admin/sync-static",
+  async (req, res) => {
+    try {
+      if (!requireRateHawkSyncSecret(req)) {
+        return res.status(401).json({
+          ok: false,
+          message:
+            "Accès RateHawk sync refusé.",
+        });
+      }
+
+      const [
+        filterValues,
+        hotelStatic,
+      ] = await Promise.all([
+        getRateHawkFilterValues(),
+        getRateHawkHotelStaticData(),
+      ]);
+
+      await Promise.all([
+        saveRateHawkMetadata(
+          "filter_values",
+          filterValues
+        ),
+        saveRateHawkMetadata(
+          "hotel_static",
+          hotelStatic
+        ),
+      ]);
+
+      return res.status(200).json({
+        ok: true,
+        message:
+          "Données statiques RateHawk synchronisées.",
+      });
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk sync static :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// RATEHAWK - SYNCHRONISATION CONTENU HOTELS
+// ======================================================
+
+app.post(
+  "/api/ratehawk/admin/sync-content",
+  async (req, res) => {
+    try {
+      if (!requireRateHawkSyncSecret(req)) {
+        return res.status(401).json({
+          ok: false,
+          message:
+            "Accès RateHawk sync refusé.",
+        });
+      }
+
+      const directHids =
+        normalizeRateHawkHids(
+          req.body?.hids
+        );
+
+      let hids = directHids;
+
+      if (hids.length === 0) {
+        const filters =
+          req.body?.filters || {};
+
+        const idsData =
+          await getRateHawkHotelIdsByFilter(
+            filters
+          );
+
+        hids =
+          normalizeRateHawkHids(
+            idsData?.data?.hids
+          );
+      }
+
+      if (hids.length === 0) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Aucun hid RateHawk à synchroniser.",
+        });
+      }
+
+      let saved = 0;
+
+      for (
+        let index = 0;
+        index < hids.length;
+        index += 100
+      ) {
+        const chunk =
+          hids.slice(
+            index,
+            index + 100
+          );
+
+        const contentData =
+          await getRateHawkHotelContentByIds({
+            hids: chunk,
+            language: "en",
+          });
+
+        saved +=
+          await saveRateHawkHotelContent(
+            contentData?.data || []
+          );
+      }
+
+      return res.status(200).json({
+        ok: true,
+        requested: hids.length,
+        saved,
+      });
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk sync contenu :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// RATEHAWK - CONTENU HOTELS DEPUIS SUPABASE
+// ======================================================
+
+app.post(
+  "/api/ratehawk/content/cached",
+  async (req, res) => {
+    try {
+      const hids =
+        normalizeRateHawkHids(
+          req.body?.hids
+        );
+
+      if (hids.length === 0) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Identifiants hôtels RateHawk manquants.",
+        });
+      }
+
+      const rows = [];
+
+      for (
+        let index = 0;
+        index < hids.length;
+        index += 500
+      ) {
+        const chunk =
+          hids.slice(
+            index,
+            index + 500
+          );
+
+        const {
+          data,
+          error,
+        } = await supabase
+          .from(
+            "ratehawk_hotel_content"
+          )
+          .select(
+            "hid, content, synced_at"
+          )
+          .in("hid", chunk);
+
+        if (error) {
+          throw new Error(
+            error.message
+          );
+        }
+
+        rows.push(
+          ...(data || [])
+        );
+      }
+
+      return res.status(200).json({
+        ok: true,
+        hotels:
+          rows.map((row) => ({
+            ...row.content,
+            _synced_at:
+              row.synced_at,
+          })),
+      });
+    } catch (error) {
+      console.error(
+        "Erreur cache RateHawk :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// RATEHAWK - SUGGESTION DESTINATION
+// ======================================================
+
+app.post(
+  "/api/ratehawk/suggest",
+  async (req, res) => {
+    try {
+      const query = String(
+        req.body?.query || ""
+      ).trim();
+
+      if (!query) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Destination manquante.",
+        });
+      }
+
+      const data =
+        await suggestRateHawkHotelAndRegion({
+          query,
+          language: "en",
+        });
+
+      return res.status(200).json(
+        data
+      );
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk suggestion destination :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// RATEHAWK - RECHERCHE HOTELS PAR REGION
+// ======================================================
+
+app.post(
+  "/api/ratehawk/search",
+  async (req, res) => {
+    try {
+      const {
+        checkin,
+        checkout,
+        regionId,
+        residency,
+        guests,
+      } = req.body;
+
+      if (
+        !checkin ||
+        !checkout
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Dates de séjour manquantes.",
+        });
+      }
+
+      if (!regionId) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Région RateHawk manquante.",
+        });
+      }
+
+      if (!residency) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Pays de résidence du voyageur manquant.",
+        });
+      }
+
+      if (
+        !Array.isArray(guests) ||
+        guests.length === 0
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Informations voyageurs manquantes.",
+        });
+      }
+
+      const isSandbox =
+        RATEHAWK_API_BASE.includes(
+          "api-sandbox.ratehawk.com"
+        );
+
+      const requestedCurrency =
+        String(
+          req.body?.currency ||
+          "EUR"
+        )
+          .trim()
+          .toUpperCase();
+
+      const currency =
+        isSandbox
+          ? "USD"
+          : requestedCurrency;
+
+      const data =
+        await searchRateHawkHotelsByRegion({
+          checkin,
+          checkout,
+          regionId,
+          residency,
+          guests,
+          currency,
+        });
+
+      return res.status(200).json(
+        data
+      );
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk recherche hôtels :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// RATEHAWK - FICHE HOTEL ET TARIFS
+// ======================================================
+
+app.post(
+  "/api/ratehawk/hotelpage",
+  async (req, res) => {
+    try {
+      const {
+        checkin,
+        checkout,
+        residency,
+        guests,
+        hid,
+      } = req.body;
+
+      if (
+        !checkin ||
+        !checkout
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Dates de séjour manquantes.",
+        });
+      }
+
+      if (!residency) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Pays de résidence du voyageur manquant.",
+        });
+      }
+
+      if (
+        !Array.isArray(guests) ||
+        guests.length === 0
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Informations voyageurs manquantes.",
+        });
+      }
+
+      if (!hid) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Identifiant hôtel RateHawk manquant.",
+        });
+      }
+
+      const isSandbox =
+        RATEHAWK_API_BASE.includes(
+          "api-sandbox.ratehawk.com"
+        );
+
+      const requestedCurrency =
+        String(
+          req.body?.currency ||
+          "EUR"
+        )
+          .trim()
+          .toUpperCase();
+
+      const currency =
+        isSandbox
+          ? "USD"
+          : requestedCurrency;
+
+      const data =
+        await getRateHawkHotelPage({
+          checkin,
+          checkout,
+          residency,
+          guests,
+          hid,
+          currency,
+        });
+
+      return res.status(200).json(
+        data
+      );
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk fiche hôtel :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// RATEHAWK - PREBOOK
+// ======================================================
+
+app.post(
+  "/api/ratehawk/prebook",
+  async (req, res) => {
+    try {
+      const {
+        hash,
+        priceIncreasePercent = null,
+      } = req.body;
+
+      if (!hash) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Hash du tarif RateHawk manquant.",
+        });
+      }
+
+      const data =
+        await prebookRateHawkHotel({
+          hash,
+          priceIncreasePercent,
+        });
+
+      return res.status(200).json(
+        data
+      );
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk prebook :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// RATEHAWK - CREATION DU PROCESSUS DE RESERVATION
+// ======================================================
+
+app.post(
+  "/api/ratehawk/booking/create",
+  async (req, res) => {
+    try {
+      const bookHash =
+        String(
+          req.body?.bookHash ||
+          req.body?.book_hash ||
+          ""
+        ).trim();
+
+      if (!bookHash) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "book_hash RateHawk manquant.",
+        });
+      }
+
+      const forwardedFor =
+        String(
+          req.headers[
+            "x-forwarded-for"
+          ] || ""
+        )
+          .split(",")[0]
+          .trim();
+
+      const userIp =
+        forwardedFor ||
+        req.socket?.remoteAddress ||
+        req.ip ||
+        "";
+
+      if (!userIp) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Adresse IP utilisateur introuvable.",
+        });
+      }
+
+      const partnerOrderId =
+        crypto.randomUUID();
+
+      const data =
+        await createRateHawkBookingProcess({
+          partnerOrderId,
+          bookHash,
+          userIp,
+        });
+
+      return res.status(200).json(
+        data
+      );
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk création réservation :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// RATEHAWK - DEMARRAGE DE LA RESERVATION
+// ======================================================
+
+app.post(
+  "/api/ratehawk/booking/start",
+  async (req, res) => {
+    try {
+      const {
+        partnerOrderId,
+        rooms,
+        paymentType,
+        supplierData = null,
+        partnerComment = null,
+        managerComment = null,
+        amountSellB2b2c = null,
+      } = req.body;
+
+      if (!partnerOrderId) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "partner_order_id RateHawk manquant.",
+        });
+      }
+
+      if (
+        !Array.isArray(rooms) ||
+        rooms.length === 0
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Informations voyageurs manquantes.",
+        });
+      }
+
+      const invalidRoom =
+        rooms.some((room) => {
+          const roomGuests =
+            Array.isArray(
+              room?.guests
+            )
+              ? room.guests
+              : [];
+
+          if (
+            roomGuests.length === 0
+          ) {
+            return true;
+          }
+
+          const hasNamedGuest =
+            roomGuests.some(
+              (guest) =>
+                String(
+                  guest?.first_name ||
+                  ""
+                ).trim() &&
+                String(
+                  guest?.last_name ||
+                  ""
+                ).trim()
+            );
+
+          if (!hasNamedGuest) {
+            return true;
+          }
+
+          return roomGuests.some(
+            (guest) =>
+              guest?.is_child ===
+                true &&
+              (
+                !Number.isInteger(
+                  Number(
+                    guest?.age
+                  )
+                ) ||
+                Number(
+                  guest.age
+                ) < 0 ||
+                Number(
+                  guest.age
+                ) > 17
+              )
+          );
+        });
+
+      if (invalidRoom) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Voyageurs RateHawk invalides : nom et prénom requis et âge obligatoire pour chaque enfant.",
+        });
+      }
+
+      if (
+        !paymentType ||
+        typeof paymentType !==
+          "object" ||
+        !String(
+          paymentType?.type ||
+          ""
+        ).trim() ||
+        paymentType?.amount ===
+          undefined ||
+        !String(
+          paymentType
+            ?.currency_code ||
+          ""
+        ).trim()
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "payment_type RateHawk incomplet.",
+        });
+      }
+
+      const manager =
+        getRateHawkManager();
+
+      const user = {
+        ...manager,
+      };
+
+      if (managerComment) {
+        user.comment =
+          String(
+            managerComment
+          ).slice(0, 256);
+      }
+
+      const data =
+        await startRateHawkBookingProcess({
+          partnerOrderId,
+          user,
+          rooms,
+          paymentType,
+          supplierData,
+          partnerComment,
+          amountSellB2b2c,
+        });
+
+      return res.status(200).json(
+        data
+      );
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk démarrage réservation :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// RATEHAWK - STATUT DE LA RESERVATION
+// ======================================================
+
+app.post(
+  "/api/ratehawk/booking/status",
+  async (req, res) => {
+    try {
+      const partnerOrderId =
+        String(
+          req.body
+            ?.partnerOrderId ||
+          req.body
+            ?.partner_order_id ||
+          ""
+        ).trim();
+
+      if (!partnerOrderId) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "partner_order_id RateHawk manquant.",
+        });
+      }
+
+      const data =
+        await checkRateHawkBookingProcess({
+          partnerOrderId,
+        });
+
+      return res.status(200).json(
+        data
+      );
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk statut réservation :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// RATEHAWK - ANNULATION DE RESERVATION
+// ======================================================
+
+app.post(
+  "/api/ratehawk/booking/cancel",
+  async (req, res) => {
+    try {
+      const partnerOrderId =
+        String(
+          req.body
+            ?.partnerOrderId ||
+          req.body
+            ?.partner_order_id ||
+          ""
+        ).trim();
+
+      if (!partnerOrderId) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "partner_order_id RateHawk manquant.",
+        });
+      }
+
+      const data =
+        await cancelRateHawkBooking({
+          partnerOrderId,
+        });
+
+      return res.status(200).json(
+        data
+      );
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk annulation réservation :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
 app.get("/", (req, res) => {
   res.json({
     ok: true,
