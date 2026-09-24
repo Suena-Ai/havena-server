@@ -1816,23 +1816,7 @@ app.post(
         });
       }
 
-      const isSandbox =
-        RATEHAWK_API_BASE.includes(
-          "api-sandbox.ratehawk.com"
-        );
-
-      const requestedCurrency =
-        String(
-          req.body?.currency ||
-          "EUR"
-        )
-          .trim()
-          .toUpperCase();
-
-      const currency =
-        isSandbox
-          ? "USD"
-          : requestedCurrency;
+     const currency = "EUR";
 
       const data =
         await searchRateHawkHotelsByRegion({
@@ -1915,23 +1899,7 @@ app.post(
         });
       }
 
-      const isSandbox =
-        RATEHAWK_API_BASE.includes(
-          "api-sandbox.ratehawk.com"
-        );
-
-      const requestedCurrency =
-        String(
-          req.body?.currency ||
-          "EUR"
-        )
-          .trim()
-          .toUpperCase();
-
-      const currency =
-        isSandbox
-          ? "USD"
-          : requestedCurrency;
+     const currency = "EUR";
 
       const data =
         await getRateHawkHotelPage({
