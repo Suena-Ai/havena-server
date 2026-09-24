@@ -1733,12 +1733,12 @@ app.post(
             language: "en",
           });
 
-        const hotels =
-          Array.isArray(
-            ratehawkData?.data?.hotels
-          )
-            ? ratehawkData.data.hotels
-            : [];
+       const hotels =
+  Array.isArray(
+    ratehawkData?.data
+  )
+    ? ratehawkData.data
+    : [];
 
         fetchedHotels.push(
           ...hotels
