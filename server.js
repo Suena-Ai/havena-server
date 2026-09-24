@@ -1660,90 +1660,16 @@ app.post(
         });
       }
 
-      // 1. Lecture du cache Supabase
-      const rows = [];
+      const hotels = [];
 
+      // RateHawk accepte maximum 100 HID par requête
       for (
         let index = 0;
         index < hids.length;
-        index += 500
-      ) {
-        const chunk =
-          hids.slice(
-            index,
-            index + 500
-          );
-
-        const {
-          data,
-          error,
-        } = await supabase
-          .from(
-            "ratehawk_hotel_content"
-          )
-          .select(
-            "hid, content, synced_at"
-          )
-          .in("hid", chunk);
-
-        if (error) {
-          throw new Error(
-            error.message
-          );
-        }
-
-        rows.push(
-          ...(data || [])
-        );
-      }
-
-     // 2. Identification des hôtels absents du cache
-// OU présents mais sans photos
-const cachedHidsWithImages =
-  new Set(
-    rows
-      .filter((row) => {
-        const content =
-          row?.content || {};
-
-        return (
-          (
-            Array.isArray(
-              content.images_ext
-            ) &&
-            content.images_ext.length > 0
-          ) ||
-          (
-            Array.isArray(
-              content.images
-            ) &&
-            content.images.length > 0
-          )
-        );
-      })
-      .map((row) =>
-        Number(row.hid)
-      )
-  );
-
-const missingHids =
-  hids.filter(
-    (hid) =>
-      !cachedHidsWithImages.has(
-        Number(hid)
-      )
-  );
-
-      // 3. Récupération RateHawk des contenus manquants
-      const fetchedHotels = [];
-
-      for (
-        let index = 0;
-        index < missingHids.length;
         index += 100
       ) {
         const chunk =
-          missingHids.slice(
+          hids.slice(
             index,
             index + 100
           );
@@ -1754,51 +1680,48 @@ const missingHids =
             language: "en",
           });
 
-       const hotels =
-  Array.isArray(
-    ratehawkData?.data
-  )
-    ? ratehawkData.data
-    : [];
+        const chunkHotels =
+          Array.isArray(
+            ratehawkData?.data
+          )
+            ? ratehawkData.data
+            : [];
 
-        fetchedHotels.push(
-          ...hotels
+        hotels.push(
+          ...chunkHotels
         );
       }
 
-      // 4. Sauvegarde des nouveaux contenus dans Supabase
-      if (
-        fetchedHotels.length > 0
-      ) {
-        await saveRateHawkHotelContent(
-          fetchedHotels
-        );
+      // Sauvegarde du contenu dans Supabase,
+      // mais l'affichage ne dépend plus du cache.
+      if (hotels.length > 0) {
+        try {
+          await saveRateHawkHotelContent(
+            hotels
+          );
+        } catch (cacheError) {
+          console.error(
+            "Cache Supabase RateHawk non bloquant :",
+            cacheError
+          );
+        }
       }
-
-      // 5. Réponse complète au FRONT
-      const cachedHotels =
-        rows.map((row) => ({
-          ...row.content,
-          _synced_at:
-            row.synced_at,
-        }));
 
       return res.status(200).json({
         ok: true,
-        hotels: [
-          ...cachedHotels,
-          ...fetchedHotels,
-        ],
+        hotels,
       });
     } catch (error) {
       console.error(
-        "Erreur cache RateHawk :",
+        "Erreur contenu RateHawk :",
         error
       );
 
       return res.status(500).json({
         ok: false,
-        message: error.message,
+        message:
+          error?.message ||
+          "Erreur contenu RateHawk.",
       });
     }
   }
