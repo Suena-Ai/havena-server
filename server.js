@@ -1816,7 +1816,9 @@ app.post(
         });
       }
 
-     const currency = "EUR";
+     const isSandbox = RATEHAWK_API_BASE.includes("api-sandbox.ratehawk.com");
+
+const currency = isSandbox ? "USD" : "EUR";
 
       const data =
         await searchRateHawkHotelsByRegion({
@@ -1899,7 +1901,9 @@ app.post(
         });
       }
 
-     const currency = "EUR";
+    const isSandbox = RATEHAWK_API_BASE.includes("api-sandbox.ratehawk.com");
+
+const currency = isSandbox ? "USD" : "EUR";
 
       const data =
         await getRateHawkHotelPage({
