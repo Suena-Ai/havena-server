@@ -1640,7 +1640,7 @@ app.post(
 );
 
 // ======================================================
-// RATEHAWK - CONTENU HOTELS DEPUIS SUPABASE
+// RATEHAWK - CONTENU HOTELS : CACHE + COMPLETION API
 // ======================================================
 
 app.post(
@@ -1660,6 +1660,7 @@ app.post(
         });
       }
 
+      // 1. Lecture du cache Supabase
       const rows = [];
 
       for (
@@ -1696,14 +1697,77 @@ app.post(
         );
       }
 
+      // 2. Identification des hôtels absents du cache
+      const cachedHids =
+        new Set(
+          rows.map((row) =>
+            Number(row.hid)
+          )
+        );
+
+      const missingHids =
+        hids.filter(
+          (hid) =>
+            !cachedHids.has(
+              Number(hid)
+            )
+        );
+
+      // 3. Récupération RateHawk des contenus manquants
+      const fetchedHotels = [];
+
+      for (
+        let index = 0;
+        index < missingHids.length;
+        index += 100
+      ) {
+        const chunk =
+          missingHids.slice(
+            index,
+            index + 100
+          );
+
+        const ratehawkData =
+          await getRateHawkHotelContentByIds({
+            hids: chunk,
+            language: "en",
+          });
+
+        const hotels =
+          Array.isArray(
+            ratehawkData?.data?.hotels
+          )
+            ? ratehawkData.data.hotels
+            : [];
+
+        fetchedHotels.push(
+          ...hotels
+        );
+      }
+
+      // 4. Sauvegarde des nouveaux contenus dans Supabase
+      if (
+        fetchedHotels.length > 0
+      ) {
+        await saveRateHawkHotelContent(
+          fetchedHotels
+        );
+      }
+
+      // 5. Réponse complète au FRONT
+      const cachedHotels =
+        rows.map((row) => ({
+          ...row.content,
+          _synced_at:
+            row.synced_at,
+        }));
+
       return res.status(200).json({
         ok: true,
-        hotels:
-          rows.map((row) => ({
-            ...row.content,
-            _synced_at:
-              row.synced_at,
-          })),
+        hotels: [
+          ...cachedHotels,
+          ...fetchedHotels,
+        ],
       });
     } catch (error) {
       console.error(
