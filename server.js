@@ -1803,7 +1803,47 @@ const missingHids =
     }
   }
 );
+// ======================================================
+// RATEHAWK - TEST CONTENU HOTEL
+// ======================================================
 
+app.get(
+  "/api/ratehawk/test-hotel-content/:hid",
+  async (req, res) => {
+    try {
+      const hid = Number(req.params.hid);
+
+      if (!Number.isInteger(hid) || hid <= 0) {
+        return res.status(400).json({
+          ok: false,
+          message: "HID invalide.",
+        });
+      }
+
+      const data =
+        await getRateHawkHotelContentByIds({
+          hids: [hid],
+          language: "en",
+        });
+
+      return res.status(200).json({
+        ok: true,
+        hid,
+        ratehawk: data,
+      });
+    } catch (error) {
+      console.error(
+        "TEST contenu RateHawk :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message: error.message,
+      });
+    }
+  }
+);
 // ======================================================
 // RATEHAWK - SUGGESTION DESTINATION
 // ======================================================
