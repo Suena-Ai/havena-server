@@ -1697,21 +1697,42 @@ app.post(
         );
       }
 
-      // 2. Identification des hôtels absents du cache
-      const cachedHids =
-        new Set(
-          rows.map((row) =>
-            Number(row.hid)
+     // 2. Identification des hôtels absents du cache
+// OU présents mais sans photos
+const cachedHidsWithImages =
+  new Set(
+    rows
+      .filter((row) => {
+        const content =
+          row?.content || {};
+
+        return (
+          (
+            Array.isArray(
+              content.images_ext
+            ) &&
+            content.images_ext.length > 0
+          ) ||
+          (
+            Array.isArray(
+              content.images
+            ) &&
+            content.images.length > 0
           )
         );
+      })
+      .map((row) =>
+        Number(row.hid)
+      )
+  );
 
-      const missingHids =
-        hids.filter(
-          (hid) =>
-            !cachedHids.has(
-              Number(hid)
-            )
-        );
+const missingHids =
+  hids.filter(
+    (hid) =>
+      !cachedHidsWithImages.has(
+        Number(hid)
+      )
+  );
 
       // 3. Récupération RateHawk des contenus manquants
       const fetchedHotels = [];
