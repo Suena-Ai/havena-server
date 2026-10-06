@@ -2189,8 +2189,42 @@ app.post(
         });
       }
 
-      const partnerOrderId =
-        crypto.randomUUID();
+  const certificationScenario =
+  String(
+    req.body?.certificationScenario || ""
+  ).trim();
+
+const isSandbox =
+  RATEHAWK_API_BASE.includes(
+    "api-sandbox.ratehawk.com"
+  );
+
+const allowedCertificationScenarios = [
+  "unknown_success",
+  "unknown_soldout",
+  "unknown_book_limit",
+];
+
+if (
+  certificationScenario &&
+  (
+    !isSandbox ||
+    !allowedCertificationScenarios.includes(
+      certificationScenario
+    )
+  )
+) {
+  return res.status(400).json({
+    ok: false,
+    message:
+      "Scénario de certification RateHawk invalide ou interdit hors Sandbox.",
+  });
+}
+
+const partnerOrderId =
+  certificationScenario
+    ? `${crypto.randomUUID()}_${certificationScenario}`
+    : crypto.randomUUID();
 console.log(
   "RATEHAWK BOOKING CREATE - partner_order_id :",
   partnerOrderId
