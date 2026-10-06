@@ -2191,17 +2191,35 @@ app.post(
 
       const partnerOrderId =
         crypto.randomUUID();
-
-      const data =
+console.log(
+  "RATEHAWK BOOKING CREATE - partner_order_id :",
+  partnerOrderId
+);
+ const data =
         await createRateHawkBookingProcess({
           partnerOrderId,
           bookHash,
           userIp,
         });
 
-      return res.status(200).json(
-        data
-      );
+const finalPartnerOrderId =
+  String(
+    data?.partner_order_id ||
+    partnerOrderId
+  ).trim();
+
+console.log(
+  "RATEHAWK BOOKING CREATE - partner_order_id définitif :",
+  finalPartnerOrderId
+);
+
+return res.status(200).json({
+  ...data,
+  partner_order_id:
+    finalPartnerOrderId,
+  partnerOrderId:
+    finalPartnerOrderId,
+});
     } catch (error) {
       console.error(
         "Erreur RateHawk création réservation :",
