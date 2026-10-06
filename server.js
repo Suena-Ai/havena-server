@@ -523,7 +523,6 @@ async function getRateHawkHotelPage({
 
 async function prebookRateHawkHotel({
   hash,
-  priceIncreasePercent = null,
 }) {
   if (!hash) {
     throw new Error(
@@ -531,28 +530,44 @@ async function prebookRateHawkHotel({
     );
   }
 
+  // HAVENA n'autorise pas d'augmentation automatique
+  // du prix pendant le Prebook.
+  // price_increase_percent n'est volontairement pas envoyé.
   const body = {
     hash,
   };
 
-  if (
-    priceIncreasePercent !== null &&
-    priceIncreasePercent !== undefined
-  ) {
-    body.price_increase_percent =
-      Number(
-        priceIncreasePercent
-      );
-  }
+const controller =
+  new AbortController();
 
-  const response = await fetch(
+const timeoutId =
+  setTimeout(() => {
+    controller.abort();
+  }, 60000);
+
+let response;
+
+try {
+  response = await fetch(
     `${RATEHAWK_API_BASE}/api/b2b/v3/hotel/prebook/`,
     {
       method: "POST",
       headers: getRateHawkHeaders(),
       body: JSON.stringify(body),
+      signal: controller.signal,
     }
   );
+} catch (error) {
+  if (error?.name === "AbortError") {
+    throw new Error(
+      "RateHawk : délai Prebook dépassé (60 secondes)."
+    );
+  }
+
+  throw error;
+} finally {
+  clearTimeout(timeoutId);
+}
 
   const data = await response.json();
 
@@ -744,11 +759,9 @@ async function checkRateHawkBookingProcess({
     `${RATEHAWK_API_BASE}/api/b2b/v3/hotel/order/booking/finish/status/`,
     {
       method: "POST",
-      headers:
-        getRateHawkHeaders(),
+      headers: getRateHawkHeaders(),
       body: JSON.stringify({
-        partner_order_id:
-          partnerOrderId,
+        partner_order_id: partnerOrderId,
       }),
     }
   );
@@ -756,43 +769,151 @@ async function checkRateHawkBookingProcess({
   let data = null;
 
   try {
-    data =
-      await response.json();
+    data = await response.json();
+  } catch (error) {
+    data = null;
+  }
+
+  // Erreur HTTP 5xx :
+  // le statut de réservation reste indéterminé.
+  // RateHawk exige de continuer les vérifications.
+  if (response.status >= 500) {
+    return {
+      status: "processing",
+      error: `HTTP ${response.status}`,
+      bookingStatus: "processing",
+      mustCheckStatus: true,
+    };
+  }
+
+  // Réservation confirmée.
+  // C'est le seul indicateur de succès utilisé par HAVENA.
+  if (data?.status === "ok") {
+    return {
+      ...data,
+      bookingStatus: "success",
+      mustCheckStatus: false,
+    };
+  }
+
+  // États temporaires :
+  // continuer à interroger finish/status.
+  if (
+    data?.status === "processing" ||
+    data?.error === "timeout" ||
+    data?.error === "unknown"
+  ) {
+    return {
+      ...data,
+      bookingStatus: "processing",
+      mustCheckStatus: true,
+    };
+  }
+
+  // Erreurs finales RateHawk :
+  // arrêter les vérifications et considérer
+  // la réservation comme échouée.
+  const finalErrors = [
+    "3ds",
+    "block",
+    "book_limit",
+    "booking_finish_did_not_succeed",
+    "charge",
+    "decoding_json",
+    "endpoint_exceeded_limit",
+    "endpoint_not_active",
+    "endpoint_not_found",
+    "incorrect_credentials",
+    "invalid_auth_header",
+    "invalid_params",
+    "lock",
+    "no_auth_header",
+    "not_allowed",
+    "not_allowed_host",
+    "order_not_found",
+    "overdue_debt",
+    "provider",
+    "soldout",
+    "unexpected_method",
+  ];
+
+  if (
+    data?.status === "error" ||
+    finalErrors.includes(data?.error)
+  ) {
+    return {
+      ...data,
+      bookingStatus: "failed",
+      mustCheckStatus: false,
+    };
+  }
+
+  // Réponse inattendue :
+  // par sécurité, ne jamais déclarer la réservation
+  // comme confirmée sans status "ok".
+  return {
+    ...data,
+    bookingStatus: "processing",
+    mustCheckStatus: true,
+  };
+}
+// ======================================================
+// RATEHAWK - INFORMATIONS DE LA RESERVATION
+// ======================================================
+
+async function getRateHawkOrderInfo({
+  partnerOrderId,
+}) {
+  if (!partnerOrderId) {
+    throw new Error(
+      "RateHawk : partner_order_id manquant."
+    );
+  }
+
+  const response = await fetch(
+    `${RATEHAWK_API_BASE}/api/b2b/v3/hotel/order/info/`,
+    {
+      method: "POST",
+      headers: getRateHawkHeaders(),
+      body: JSON.stringify({
+        ordering: {
+          ordering_type: "desc",
+          ordering_by: "created_at",
+        },
+        pagination: {
+          page_size: 1,
+          page_number: 1,
+        },
+        search: {
+          partner_order_ids: [
+            partnerOrderId,
+          ],
+        },
+        language: "en",
+      }),
+    }
+  );
+
+  let data = null;
+
+  try {
+    data = await response.json();
   } catch (error) {
     data = null;
   }
 
   if (
-    response.status >= 500
+    !response.ok ||
+    data?.status === "error"
   ) {
-    return {
-      status: "processing",
-      error:
-        `HTTP ${response.status}`,
-      mustCheckStatus: true,
-    };
+    throw new Error(
+      data?.error ||
+      `Erreur RateHawk ${response.status}`
+    );
   }
 
-  if (
-    data?.status ===
-      "processing" ||
-    data?.error ===
-      "timeout" ||
-    data?.error ===
-      "unknown"
-  ) {
-    return {
-      ...data,
-      mustCheckStatus: true,
-    };
-  }
-
-  return {
-    ...data,
-    mustCheckStatus: false,
-  };
+  return data;
 }
-
 // ======================================================
 // RATEHAWK - ANNULATION
 // ======================================================
@@ -1988,10 +2109,9 @@ app.post(
   "/api/ratehawk/prebook",
   async (req, res) => {
     try {
-      const {
-        hash,
-        priceIncreasePercent = null,
-      } = req.body;
+    const {
+  hash,
+} = req.body;
 
       if (!hash) {
         return res.status(400).json({
@@ -2002,10 +2122,9 @@ app.post(
       }
 
       const data =
-        await prebookRateHawkHotel({
-          hash,
-          priceIncreasePercent,
-        });
+  await prebookRateHawkHotel({
+    hash,
+  });
 
       return res.status(200).json(
         data
@@ -2306,6 +2425,52 @@ app.post(
   }
 );
 
+// ======================================================
+// RATEHAWK - INFORMATIONS DE LA RESERVATION
+// ======================================================
+
+app.post(
+  "/api/ratehawk/booking/info",
+  async (req, res) => {
+    try {
+      const partnerOrderId =
+        String(
+          req.body?.partnerOrderId ||
+          req.body?.partner_order_id ||
+          ""
+        ).trim();
+
+      if (!partnerOrderId) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "partner_order_id RateHawk manquant.",
+        });
+      }
+
+      const data =
+        await getRateHawkOrderInfo({
+          partnerOrderId,
+        });
+
+      return res.status(200).json(
+        data
+      );
+    } catch (error) {
+      console.error(
+        "Erreur RateHawk informations réservation :",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        message:
+          error?.message ||
+          "Erreur RateHawk informations réservation.",
+      });
+    }
+  }
+);
 // ======================================================
 // RATEHAWK - ANNULATION DE RESERVATION
 // ======================================================
