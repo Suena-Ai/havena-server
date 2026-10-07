@@ -440,23 +440,43 @@ async function searchRateHawkHotelsByRegion({
   guests,
   currency = "EUR",
 }) {
-  const response = await fetch(
-    `${RATEHAWK_API_BASE}/api/b2b/v3/search/serp/region/`,
-    {
-      method: "POST",
-      headers: getRateHawkHeaders(),
-      body: JSON.stringify({
-        checkin,
-        checkout,
-        residency,
-        language: "en",
-        guests,
-        region_id:
-          Number(regionId),
-        currency,
-      }),
+  const controller = new AbortController();
+
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, 60000);
+
+  let response;
+
+  try {
+    response = await fetch(
+      `${RATEHAWK_API_BASE}/api/b2b/v3/search/serp/region/`,
+      {
+        method: "POST",
+        headers: getRateHawkHeaders(),
+        body: JSON.stringify({
+          checkin,
+          checkout,
+          residency,
+          language: "en",
+          guests,
+          region_id: Number(regionId),
+          currency,
+        }),
+        signal: controller.signal,
+      }
+    );
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(
+        "RateHawk : délai de recherche dépassé (60 secondes)."
+      );
     }
-  );
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const data = await response.json();
 
@@ -485,22 +505,43 @@ async function getRateHawkHotelPage({
   hid,
   currency = "EUR",
 }) {
-  const response = await fetch(
-    `${RATEHAWK_API_BASE}/api/b2b/v3/search/hp/`,
-    {
-      method: "POST",
-      headers: getRateHawkHeaders(),
-      body: JSON.stringify({
-        checkin,
-        checkout,
-        residency,
-        language: "en",
-        guests,
-        hid: Number(hid),
-        currency,
-      }),
+  const controller = new AbortController();
+
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, 60000);
+
+  let response;
+
+  try {
+    response = await fetch(
+      `${RATEHAWK_API_BASE}/api/b2b/v3/search/hp/`,
+      {
+        method: "POST",
+        headers: getRateHawkHeaders(),
+        body: JSON.stringify({
+          checkin,
+          checkout,
+          residency,
+          language: "en",
+          guests,
+          hid: Number(hid),
+          currency,
+        }),
+        signal: controller.signal,
+      }
+    );
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(
+        "RateHawk : délai de recherche hôtel dépassé (60 secondes)."
+      );
     }
-  );
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const data = await response.json();
 
