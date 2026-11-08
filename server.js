@@ -341,6 +341,26 @@ async function saveRateHawkMetadata(
   }
 }
 
+async function readRateHawkHotelContent(hids) {
+  const hotels = [];
+  for (let index = 0; index < hids.length; index += 100) {
+    const { data, error } = await supabase
+      .from("ratehawk_hotel_content")
+      .select("hid, content")
+      .in("hid", hids.slice(index, index + 100));
+    if (error) {
+      throw new Error(`Supabase RateHawk hôtels : ${error.message}`);
+    }
+    for (const row of data || []) {
+      if (row.content && typeof row.content === "object") {
+        hotels.push({ ...row.content, hid: Number(row.hid) });
+      }
+    }
+  }
+  const byHid = new Map(hotels.map((hotel) => [hotel.hid, hotel]));
+  return hids.map((hid) => byHid.get(hid)).filter(Boolean);
+}
+
 async function saveRateHawkHotelContent(
   hotels
 ) {
@@ -1802,7 +1822,7 @@ app.post(
 );
 
 // ======================================================
-// RATEHAWK - CONTENU HOTELS : CACHE + COMPLETION API
+// RATEHAWK - CONTENU HOTELS : BASE LOCALE UNIQUEMENT
 // ======================================================
 
 app.post(
@@ -1822,56 +1842,16 @@ app.post(
         });
       }
 
-      const hotels = [];
-
-      // RateHawk accepte maximum 100 HID par requête
-      for (
-        let index = 0;
-        index < hids.length;
-        index += 100
-      ) {
-        const chunk =
-          hids.slice(
-            index,
-            index + 100
-          );
-
-        const ratehawkData =
-          await getRateHawkHotelContentByIds({
-            hids: chunk,
-            language: "en",
-          });
-
-        const chunkHotels =
-          Array.isArray(
-            ratehawkData?.data
-          )
-            ? ratehawkData.data
-            : [];
-
-        hotels.push(
-          ...chunkHotels
-        );
-      }
-
-      // Sauvegarde du contenu dans Supabase,
-      // mais l'affichage ne dépend plus du cache.
-      if (hotels.length > 0) {
-        try {
-          await saveRateHawkHotelContent(
-            hotels
-          );
-        } catch (cacheError) {
-          console.error(
-            "Cache Supabase RateHawk non bloquant :",
-            cacheError
-          );
-        }
-      }
+      // Lecture locale uniquement : les contenus manquants doivent être
+      // préchargés via la route administrateur /admin/sync-content.
+      const hotels = await readRateHawkHotelContent(hids);
+      const foundHids = new Set(hotels.map((hotel) => hotel.hid));
+      const missingHids = hids.filter((hid) => !foundHids.has(hid));
 
       return res.status(200).json({
         ok: true,
         hotels,
+        missing_hids: missingHids,
       });
     } catch (error) {
       console.error(
@@ -1905,11 +1885,14 @@ app.get(
         });
       }
 
-      const data =
-        await getRateHawkHotelContentByIds({
-          hids: [hid],
-          language: "en",
+      const hotels = await readRateHawkHotelContent([hid]);
+      if (hotels.length === 0) {
+        return res.status(404).json({
+          ok: false,
+          message: "Contenu hôtel absent de la base locale. Synchronisation administrateur requise.",
         });
+      }
+      const data = { status: "ok", data: hotels };
 
       return res.status(200).json({
         ok: true,
