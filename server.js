@@ -1754,7 +1754,26 @@ app.post(
 
       let hids = directHids;
 
-      if (hids.length === 0) {
+      // Administrative preloading only. Never call the content API during
+      // hotel search or hotel page requests (RateHawk certification).
+      if (hids.length === 0 && req.body?.missingPhotosOnly === true) {
+        const limit = Math.min(100, Math.max(1, Number(req.body?.limit) || 100));
+        const { data: missing, error: missingError } = await supabase
+          .from("ratehawk_hotel_content")
+          .select("hid, content, synced_at")
+          .order("synced_at", { ascending: true })
+          .limit(1000);
+        if (missingError) throw new Error(missingError.message);
+        hids = (missing || [])
+          .filter((row) => {
+            const images = row?.content?.images_ext;
+            return !Array.isArray(images) || images.length === 0;
+          })
+          .slice(0, limit)
+          .map((row) => Number(row.hid));
+      }
+
+      if (hids.length === 0 && req.body?.missingPhotosOnly !== true) {
         const filters =
           req.body?.filters || {};
 
@@ -1770,10 +1789,11 @@ app.post(
       }
 
       if (hids.length === 0) {
-        return res.status(400).json({
-          ok: false,
-          message:
-            "Aucun hid RateHawk à synchroniser.",
+        return res.status(200).json({
+          ok: true,
+          requested: 0,
+          saved: 0,
+          message: "Aucun hôtel à synchroniser.",
         });
       }
 
